@@ -338,6 +338,7 @@ proc initCompletion*(view: gtksource.View; completion: gtksource.Completion; win
   register(wordProvider, view.getBuffer)
   discard addProvider(completion, wordProvider, error)
   objectSet(wordProvider, "priority", 10, nil)
+  objectSet(wordProvider, "activation", CompletionActivation.USER_REQUESTED, nil)
   let nsProvider = provider(newObject(providerGetType(), nil))
   nsProvider.priority = 5
   nsProvider.win = win
@@ -346,7 +347,8 @@ proc initCompletion*(view: gtksource.View; completion: gtksource.Completion; win
   
 proc save(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
   var startIter, endIter: TextIterObj
-  let view: NimView = nimEdApp(app).lastActiveView
+  doAssert isNimEdAppWindow(app)
+  let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
   let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
   buffer.getStartIter(startIter)
   buffer.getEndIter(endIter)
