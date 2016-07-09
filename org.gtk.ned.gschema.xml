@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema path="/org/gtk/ned/" id="org.gtk.ned">
+    <key name="font" type="s">
+      <default>'Monospace 12'</default>
+      <summary>Font</summary>
+      <description>The font to be used for content.</description>
+    </key>
+    <key name="style" type="s">
+      <default>''</default>
+      <summary>Style</summary>
+      <description>Style.</description>
+    </key>
+    <key name="duper" type="b">
+      <default>false</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="mops" type="b">
+      <default>false</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="styleschemesettingsid" type="s">
+      <default>'classic'</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+  </schema>
+</schemalist>
