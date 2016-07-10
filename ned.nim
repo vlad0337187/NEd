@@ -1,5 +1,5 @@
 # NEd (NimEd) -- a minimal GTK3/GtkSourceView Nim editor with nimsuggest support 
-# S. Salewski, 2016-JUL-09
+# S. Salewski, 2016-JUL-10
 # v 0.1
 {.deadCodeElim: on.}
 {.link: "resources.o".}
@@ -368,10 +368,11 @@ proc settingsChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWindow)
   let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
   let manager = styleSchemeManagerGetDefault()
   let style = getScheme(manager, getString(settings, key))
-  var p: GList = priv.buffers
-  while p != nil:
-    gtksource.buffer(p.data).setStyleScheme(style)
-    p = p.next
+  if style != nil:
+    var p: GList = priv.buffers
+    while p != nil:
+      gtksource.buffer(p.data).setStyleScheme(style)
+      p = p.next
 
 # TODO: check
 proc nimEdAppWindowInit(self: NimEdAppWindow) =
@@ -663,9 +664,11 @@ proc nimEdAppWindowOpen*(win: NimEdAppWindow; notebook: Notebook; file: gio.GFil
     let tag: gtk3.TextTag = buffer.createTag(nil, nil)
     `bind`(priv.settings, "font", tag, "font", gio.GSettingsBindFlags.DEFAULT)
     let scheme: cstring  = getString(priv.settings, StyleSchemeSettingsID)
-    let manager = styleSchemeManagerGetDefault()
-    let style = getScheme(manager, scheme)
-    buffer.setStyleScheme(style)
+    if scheme != nil:
+      let manager = styleSchemeManagerGetDefault()
+      let style = getScheme(manager, scheme)
+      if style != nil:
+        buffer.setStyleScheme(style)
     buffer.getStartIter(startIter)
     buffer.getEndIter(endIter)
     buffer.applyTag(tag, startIter, endIter)
@@ -891,13 +894,15 @@ proc nimEdAppActivateOrOpen(win: NimEdAppWindow) =
   if scheme != nil:
     let manager = styleSchemeManagerGetDefault()
     let style = getScheme(manager, scheme)
-    let st: gtksource.Style = gtksource.getStyle(style, "text")
-    var fg, bg: cstring
-    objectGet(st, "foreground", addr fg, nil)
-    objectGet(st, "background", addr bg, nil)
-    setTTColor(fg, bg)
-    free(fg)
-    free(bg)
+    if style != nil:
+      let st: gtksource.Style = gtksource.getStyle(style, "text")
+      if st != nil:
+        var fg, bg: cstring
+        objectGet(st, "foreground", addr fg, nil)
+        objectGet(st, "background", addr bg, nil)
+        setTTColor(fg, bg)
+        free(fg)
+        free(bg)
   win.setDefaultSize(600, 400)
   present(win)
 
