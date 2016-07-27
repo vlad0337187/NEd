@@ -7,6 +7,8 @@ Version 0.1, 10-JUL-2016
 This is the initial release of a plain GTK3 editor with special support for the Nim programming language.
 This includes syntax highlighting, fast check for errors, optional suggestions for identifiers and easy navigation to definitions.
 
+My current local working copy already has multiview support, which is shown below:
+
 === Visual appearance
 
 image::NEd.png[]
@@ -152,5 +154,5 @@ next/previous occurrence provided yet.
 * kbd:[Ctrl Space] : If cursor is located over a period, then nimsuggest tries to suggest _methods_. Try `1.2.` which
 should offer `mim`, `max` and other float related proc names. If cursor is not located on the right of a period, then
 GtkSourceView calls its word provider to suggest word completions. Type `pro` and you should get `procs`. These suggestions
-do not work to well currently, some further investigations may be necessary.
+do not work too well currently, some further investigations may be necessary.
 
