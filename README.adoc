@@ -101,6 +101,7 @@ ln -s ~/ngtk3/nim-atk/src/atk.nim
 ln -s ~/ngtk3/nim-glib/src/glib.nim
 ln -s ~/ngtk3/nim-gdk3/src/gdk3.nim
 ln -s ~/ngtk3/nim-gtk3/src/gtk3.nim
+ln -s ~/ngtk3/nim-gtksourceview/src/gtksource.nim
 ln -s ~/ngtk3/nim-gobject/src/gobject.nim
 ln -s ~/ngtk3/nim-cairo/src/cairo.nim
 ln -s ~/ngtk3/nim-pango/src/pango.nim
