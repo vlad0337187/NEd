@@ -11,18 +11,63 @@
       <summary>Style</summary>
       <description>Style.</description>
     </key>
-    <key name="duper" type="b">
-      <default>false</default>
-      <summary>Show words</summary>
-      <description>Whether to show a word list in the sidebar</description>
-    </key>
-    <key name="mops" type="b">
-      <default>false</default>
-      <summary>Show words</summary>
-      <description>Whether to show a word list in the sidebar</description>
-    </key>
     <key name="styleschemesettingsid" type="s">
       <default>'classic'</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="fontsettingsid" type="s">
+      <default>'classic'</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="showtabs" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="autoindent" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="wordboundaries" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="regexenabled" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="wraparound" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="casesensitive" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="showlinenumbers" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="scrollbaroverlay" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="scrollbarautomatic" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="reusedefinition" type="b">
+      <default>true</default>
       <summary>Show words</summary>
       <description>Whether to show a word list in the sidebar</description>
     </key>

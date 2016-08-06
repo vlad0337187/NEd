@@ -2,61 +2,79 @@
 :experimental:
 :imagesdir: http://ssalewski.de/tmp
 (c) Stefan Salewski +
-Version 0.1, 10-JUL-2016
+Version 0.2, 06-AUG-2016
 
-This is the initial release of a plain GTK3 editor with special support for the Nim programming language.
-This includes syntax highlighting, fast check for errors, optional suggestions for identifiers and easy navigation to definitions.
-
-My current local working copy already has multiview support, which is shown below:
+This is the initial release of a plain GTK3 text editor with special support for the
+Nim programming language.  This includes syntax highlighting, fast check for
+errors, optional suggestions for identifiers and easy navigation to
+definitions.  Multi-View display and searching is now supported as well.
 
 === Visual appearance
 
-image::NEd.png[]
+image::ned_0.2.png[]
+
+You can optionally hide notebook tabs, scrollbars and line number display.
 
 === Introduction
 
-In first line this program is one more test and example of the https://github.com/ngtk3[GTK3 bindings] for the http://nim-lang.org[Nim]
+In first line this program is one more test and example of the
+https://github.com/ngtk3[GTK3 bindings] for the http://nim-lang.org[Nim]
 programming language.
 
-If you have no intention coding in Nim language and absolutely do not like the GTK3 GUI toolkit, then this software is definitely not for you.
-In the best case you actually consider doing some GTK3 GUI coding, but that is optional.
-And it should be clear that this tool can not compare with powerful editors like _Vim_ or _Emacs_ or proprietary editors.
-Maybe in a later stage it can become comparable to _GEdit_, the default Gnome/GTK editor.
+If you have no intention coding in Nim language or absolutely do not like the
+GTK3 GUI toolkit, then this software is definitely not for you.  In the best
+case you actually consider doing some GTK3 GUI coding, but that is optional.
+And it should be clear that this tool can not compare with powerful editors
+like _Vim_ or _Emacs_ or proprietary editors.  Maybe in a later stage it can
+become comparable to _GEdit_, the default Gnome/GTK editor. Well not really,
+https://www.openhub.net/[OpenHub] reports 100k lines of _C_ code for GEdit, while this
+tool has currently not much more than 1k lines of Nim code, and it will never
+have more than a few thousand :-)
 
-GTK is not very popular currently.
-Some reasons for this may be that GTK is not really cross platform with native look and feel, and that it's
-object oriented design coded in plain C is a bit strange. But on the other hand its C API makes language
-Bindings available for many programming languages.
+GTK is not very popular currently.  Some reasons for this may be that GTK is
+not really cross platform with native look and feel, and that it's object
+oriented design coded in plain C is a bit strange. But on the other hand its C
+_API_ makes language bindings available for many programming languages.
 
-Current GTK3 bindings for Nim are not really high level. This means that the GTK3 widgets can not be extended
-in the same way as Nim objects, and that it can be necessary to free objects or memory manually. Both is not
-really a big problem, we can use _GObject_ macro system to subclass widgets, we can put widgets into Nim object or create
-other references between Nim objects and GTK widgets, maybe with hash maps. Or we may use `g_object_set_data()/g_object_get_data()`
-to extend widgets derived from GObject base class with custom data.
-And manual memory deallocation is only 
-necessary in rare cases, because GTK uses reference counting: Widgets are generally put into containers like boxes or windows -- 
-when the containers are destroyed the children are unreferenced and destroyed automatically. This works not bad in C, and works
-in Nim also. The low level structure of the current GTK3 bindings has the advantage, that the Nim code has the same
-basic structure as C code, so the available C examples can be used as guides. For example this tool is based on
-GTK_Source_View C examples and Gnome application examples.footnote:[https://developer.gnome.org/gtk3/stable/ch01s04.html#id-1.2.3.12.5]
+Current GTK3 bindings for Nim are not really high level. This means that the
+GTK3 widgets can not be extended in the same way as Nim objects, and that it
+can be necessary to free objects or memory manually. Both is not really a big
+problem, we can use _GObject_ macro system to subclass widgets, we can put
+widgets into Nim object or create other references between Nim objects and GTK
+widgets, maybe with hash maps. Or we may use
+`g_object_set_data()/g_object_get_data()` to extend widgets derived from
+GObject base class with custom data.  And manual memory deallocation is only
+necessary in rare cases, because GTK uses reference counting: Widgets are
+generally put into containers like boxes or windows -- when the containers are
+destroyed the children are unreferenced and destroyed automatically. This works
+not bad in C, and works in Nim also. The low level structure of the current
+GTK3 bindings has the advantage, that the Nim code has the same basic structure
+as C code, so the available C examples can be used as guides. For example this
+tool is based on _GTK_Source_View_ C examples and Gnome application
+examples.footnote:[https://developer.gnome.org/gtk3/stable/ch01s04.html#id-1.2.3.12.5]
 
-Later we may create higher level GTK3 bindings for Nim, with easy extensible Widgets and Garbage Collection support.
-It should be not too difficult to adapt our software then.
+Later we may create higher level GTK3 bindings for Nim, with easy extensible
+Widgets and _Garbage Collection_ support.  It should be not too difficult to
+adapt our software then.
 
-The biggest problem is unfortunately that we need some knowledge of GTK3 and the related libraries when we intent to
-do serious GUI development. The C API documentation is really not that bad, but is large and learning it can take some
-time and effort.
+The biggest problem is unfortunately that we need some knowledge of GTK3 and
+the related libraries when we intent to do serious GUI development. The C API
+documentation is really not that bad, but it is large and learning it can take
+some time and effort.
 
 === Install
 
-Currently this editor is only tested on 64 bit Linux with GTK 3.18 (Gentoo AMD64).
-You need a working Nim compiler and a working installation of Nim's nimsuggest tool.
-And GTK 3.18 or higher and related packages, including GtkSourceView and maybe additional the related developer files.
+Currently this editor is only tested on 64 bit _Linux_ with GTK 3.18 (_Gentoo
+AMD64_).  You need a working Nim compiler (version 0.14.2 or higher) and a working installation of Nim's
+_nimsuggest_ tool.  And GTK 3.18 or higher and related packages, including
+GtkSourceView and maybe additional the related developer files.
 
-Install through Nim's package Manager Nimble is currently not supported due to name conflicts with old
-legacy GTK2 packages which are part of Nim's standard software base.
+Install through Nim's package Manager Nimble is currently not supported due to
+name conflicts with old legacy GTK2 packages which are part of Nim's standard
+software base.
 
-Open a terminal window and execute these commands (of course you may copy the commands to a file and then execute that file.)
+Open a terminal window and execute these commands (of course you may copy the
+commands to a file and then execute that file.)
 
 ----
 cd
@@ -92,11 +110,19 @@ ln -s ~/ngtk3/nim-gdk_pixbuf/src/gdk_pixbuf.nim
 bash ./make_it
 ----
 
-The make_it build script is necessary because we have to generate resource files from the XML files for the GUI.
-That script calls _gcc_, you may try to modify it for clang.
+The make_it build script is necessary because we have to generate resource
+files from the XML files for the _GUI_.  That script calls _gcc_ C compiler,
+you may try to modify it for clang. And you may add option `-d:release` to
+get smaler and faster executable without debugging code.
 
-Maybe you want to try the included color scheme and syntax highlight xml file? In that case you may consult the gedit
-instructions. On my Linux box I put these file where the other GtkSourceView files reside:
+Note: This tool uses Gnome's gsettings for storing state. To reset these state
+this command can be used:
+
+`gsettings --schemadir "." reset-recursively "org.gtk.ned"''
+
+Maybe you want to try the included color scheme and syntax highlight _XML_ file?
+In that case you may consult the gedit instructions. On my Linux box I put
+these file where the other GtkSourceView files reside:
 
 ----
 # as root
@@ -104,8 +130,9 @@ cp nimdark1.xml /usr/share/gtksourceview-3.0/styles/
 cp nim.lang /usr/share/gtksourceview-3.0/language-specs/
 ----
 
-That nim.lang file contains code to generate vertical bars to indicate indentation, which may look ugly with
-other color schemes. For that case, just remove these lines at the bottom of file nim.lang:
+That nim.lang file contains code to generate vertical bars to indicate
+indentation, which may look ugly with other color schemes. For that case, just
+remove these lines at the bottom of file nim.lang:
 
 ----
 <context ref="indent-pat0"/>
@@ -124,35 +151,167 @@ Or you may try the syntax-highlighting file from https://github.com/nim-lang/Apo
 
 === Using the Editor
 
-The title bar of the Gnome Desktop should display a NEd menu, which allows you to select fonts and color schemes.
-Ned offers only very limited set of functions currently -- basically loading more files and saving content.
+The title bar of the _Gnome Desktop_ should display a _NEd_ menu, which allows you
+to select fonts and color schemes.  Proportional fonts are supported, but some
+have tiny spaces unfortunately. You may try the _Input_ font series, which are
+free of charge for personal use. The preferences dialog allows to tune display
+of line numbers, notebook tabs and scrollbars. And you can change some search
+options. Search with replace in not yet supported. The _Gears_ menu has entries
+for splitting the current view vertically or horizontally -- you can change the
+size of the split views with an invisible slider. And you can reposition
+notebook tabs by grabbing the tab with the textual label and moving it onto
+other tabs (drag and drop). (That does not work when tabs are hidden, and needs
+some skills: Mouse pointer changes shape when drop position is reached.)
+Generally new views are opened in the notebook which contains the last active
+view -- the one which had focus (input cursor ) recently. If the active view
+has title _Unsaved_ and contains no text, that one is used for the new file.
+(Remember, it has to be active, so you may have to click into that text area
+before to indicate that you really want to fill that one.)
 
-Most functionality is provided by GtkSourceView and related widgets, that includes text input, cursor movement,
-scrolling, selecting text with the mouse and much more.
+For vertical scrolling you can use the mouse wheel, and right mouse button
+display a context menu with _cut/copy/past_ and _undo_ support.
 
-Right mouse button pops up a pull-down menu which offer `cut, copy, undo.`
+Most functionality is provided by GtkSourceView and related widgets, that
+includes text input, cursor movement, scrolling, selecting text with the mouse
+and much more.
 
-You may enter search terms into the search text entry -- occurrences are highlighted immediately. Currently there is
-no function to jump to next or previous occurrence
+You may enter search terms into the search text entry -- occurrences are
+highlighted immediately.  If you enter a number prefixed with ':' view will
+scroll to that line.
+
+Ctrl+G and Ctrl+Shift+G scrolls to next or previous occurrence. Or you can use
+Ctrl+F in the text area to find the word under the cursor or the selected text.
+Pressing Ctrl+F again turns of highlight.
 
 === Keyboard Shortcuts
 
-Shortcuts are not user customizable currently -- I am not sure if there would be a real advantage, but of course we may add that later.
+Many useful _keyboard shortcuts_ are already defined by GTK itself. These are
+listed in the table below.  I tried not to modify these predefined ones,
+because you may be already familiar with it.
 
-Some keyboard support is provided by GtkSourceView, this includes
+.Nim Keyboard Shortcuts
+|===
+2+|*Nimsuggest*
+|Check for Errors|Ctrl+E
+|What is, Goto Definition|Ctrl+W
+|Suggestions|Ctrl+Space
+|===
 
-* kbd:[SHIFT Cursor Right] : Select text
-* kbd:[F7] : Hide insert mark, allow easier cursor scrolling
+.Predefined GTK Keyboard Shortcuts
+// This list is from gedit docs, with gedit specific command commented out
+|===
+2+|*General*
+|Maximize window|Alt+Up Arrow
+|Unmaximize window|Alt+Down Arrow
+|Maximize window in the left|Alt+Left Arrow
+|Maximize window in the right|Alt+Right Arrow
+|Toggle view mode, hide cursor|F7
+2+|*Notebook tab-related Shortcuts*
+|Switch to the next tab to the left|Ctrl+Alt+PageUp
+|Switch to the next tab to the right|Ctrl+Alt+PageDown
+//|Close tab|Ctrl+W
+//|Save all tabs|Ctrl+Shift+L
+//|Close all tabs|Ctrl+Shift+W
+//|Reopen the most recently closed tab|Ctrl+Shift+T
+//|Jump to nth tab|Alt+ n
+//|New tab group|Ctrl+Alt+N
+//|Previous tab group|Shift+Ctrl+Alt+Page up
+//|Next tab group|Shift+Ctrl+Alt+Page down
+2+|*Shortcut keys for working with files*
+//|Create a new document in a new window|Ctrl+N
+//|Create a new document in a new tab|Ctrl+T
+//|Open a document|Ctrl+O
+//|Open the Quick Open window|Alt+O
+//|Save the current document|Ctrl+S
+//|Save the current document with a new filename|Ctrl+Shift+S
+//|Print the current document|Ctrl +P
+//|Print preview|Ctrl+Shift+P
+//|Close the current document|Ctrl+W
+|Quit program|Ctrl+Q
+2+|*Shortcut keys for editing files*
+|Move to the beginning of the current line|Home
+|Move to the end of the current line|End
+|Move to the beginning of the document|Ctrl+Home
+|Move to the end of the document|Ctrl+End
+|Move the selected word right one word|Alt+Right Arrow
+|Move the selected word left one word|Alt+Left Arrow
+|Select text to the left|Shift+Left Arrow
+|Select text to the right|Shift+Right Arrow
+|Undo the last action|Ctrl+Z
+|Redo the last undone action|Ctrl+Shift+Z
+|Cut the selected text or region and place it on the clipboard|Ctrl+X
+|Copy the selected text or region onto the clipboard|Ctrl+C
+|Paste the contents of the clipboard|Ctrl+V
+|Select all text in the file|Ctrl+A
+|Delete the current line|Ctrl+D
+|Move the selected line up one line|Alt+Up Arrow
+|Move the selected line down one line|Alt+Down Arrow
+|Add a tab stop|Tab
+|Remove a tab stop|Shift+Tab
+//|Convert the selected text to upper case|Ctrl+U
+//|Convert the selected text to lower case|Ctrl+L
+//|Toggle case of the selected text|Ctrl+~
+//2+|*Shortcut keys for showing and hiding panes*
+//|Show / hide the side pane|F9
+//|Show / hide the bottom pane|Ctrl+F9
+//|Open the file menu|F10
 
-The Editor itself adds currently these keyboard bindings
+2+|*Shortcut keys for searching*
+|Find a string|Ctrl+F
+|Find the next instance of the string|Ctrl+G
+|Find the previous instance of the string|Ctrl+Shift+G
+//|Search and Replace|Ctrl+H
+//|Clear highlight|Ctrl+Shift+K
+//|Goto line|Ctrl+I
+//2+|*Shortcut keys for tools*
+//|Check spelling|Shift+F7
+//|Remove trailing spaces (with plugin)|Alt+F12
+//|Run "make" in the current directory (with plugin)|F8
+//|Directory listing (with plugin)|Ctrl+Shift+D
+//2+|*Shortcut keys for user help*|
+//|Open the gedit user guide|F1
+|===
 
-* kbd:[Ctrl D] : _Goto definition_: Place cursor over a proc name and press kbd:[Ctrl D] -- a new tab opens and
-cursor jumps to that name. Later we may add variants of this functionality, maybe tooltip display of relevant block only.
-* kbd:[Ctrl E] : Check source code for errors and mark these with gutter marks, underlining and tooltip description. 
-* kbd:[Ctrl F] : Find (highlight) word under cursor or selected text. Press again to toggle. There is no jump to
-next/previous occurrence provided yet.
-* kbd:[Ctrl Space] : If cursor is located over a period, then nimsuggest tries to suggest _methods_. Try `1.2.` which
-should offer `mim`, `max` and other float related proc names. If cursor is not located on the right of a period, then
-GtkSourceView calls its word provider to suggest word completions. Type `pro` and you should get `procs`. These suggestions
-do not work too well currently, some further investigations may be necessary.
+Shortcuts are not user customizable currently -- I am not sure if there would
+be a real advantage, but of course we may add that later.
 
+The editor itself adds currently these keyboard bindings
+
+* kbd:[Ctrl W] : _Goto definition_ or _What is_: Place cursor over a proc name
+and press kbd:[Ctrl W] -- a
+new tab opens and cursor jumps to that name. If an empty view titled _Unnamed_
+is available, that one is use. If you select `Reuse Definition View` in
+preferences, than an existing definition view is reused, otherwise new vies are opened.  If
+more than one notebook are open, then you can select which of these are used
+for new definition views: Click into one of the views of the desired notebook,
+and then use `Mark Target` from `Gears` menu.  Later we may add variants of this
+`Goto Definition` functionality, maybe tooltip display of relevant block only.
+
+* kbd:[Ctrl E] : Check source code for errors and mark these with gutter marks,
+underlining and tooltip description.
+There is no jump to next/previous error occurrence provided yet.
+
+* kbd:[Ctrl F] : Find (highlight) word under cursor or selected text. Press
+again to toggle.
+
+* kbd:[Ctrl Space] : If cursor is located over a period, then nimsuggest tries
+to suggest _methods_. Try `1.2.` which
+should offer `mim`, `max` and other float related proc names. If cursor is not
+located on the right of a period, then GtkSourceView calls its word provider to
+suggest word completions. Type `pro` and you should get `procs`. These
+suggestions do not work too well currently, some further investigations may be
+necessary.
+
+=== Final words
+
+This tool is in an very early state currently. The `nimsuggest` functionality
+is very fragile still and needs testing. While error check seems to works fine,
+`Goto definition` may fail, and `Suggestions` may even crash the program. I
+have not done systematic investigations yet.
+
+The `GTK` related part seems to work well, when using hidden scroll bars I got
+error messages from GTK for some situations, I have still no idea for the
+reason. Maybe they will vanish with GTK 3.20.
+
+Basically this tool looks nice and works really well. So I indent to use it for
+basic Nim coding myself.

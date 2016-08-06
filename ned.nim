@@ -1,12 +1,15 @@
-# NEd (NimEd) -- a minimal GTK3/GtkSourceView Nim editor with nimsuggest support 
-# S. Salewski, 2016-JUL-10
-# v 0.1
+# NEd (NimEd) -- a plain GTK3/GtkSourceView Nim editor with nimsuggest support 
+# S. Salewski, 2016-AUG-06
+# v 0.2
+#
+# Note: for resetting gsettings database:
+# gsettings --schemadir "." reset-recursively "org.gtk.ned"
+#
 {.deadCodeElim: on.}
 {.link: "resources.o".}
 
 import gobject, gtk3, gdk3, gio, glib, gtksource, gdk_pixbuf, pango
-from parseutils import skipUntil, parseInt
-import osproc, streams, os, net, strutils, sequtils, logging
+import osproc, streams, os, net, strutils, sequtils, logging, parseutils #, strscans
 
 # Since the 3.20 version, if @line_number is greater than the number of lines
 # in the @buffer, the end iterator is returned. And if @byte_index is off the
@@ -32,26 +35,29 @@ const
   ErrorTagName = "error"
   NSPort = Port(6000)
   StyleSchemeSettingsID = cstring("styleschemesettingsid") # must be lower case
+  FontSettingsID = cstring("fontsettingsid") # must be lower case
 
 var nsProcess: Process # nimsuggest
 
 type
   NimEdAppWindow* = ptr NimEdAppWindowObj
   NimEdAppWindowObj* = object of gtk3.ApplicationWindowObj
-
-  NimEdAppWindowClass = ptr NimEdAppWindowClassObj
-  NimEdAppWindowClassObj = object of gtk3.ApplicationWindowClassObj
-
-  NimEdAppWindowPrivate = ptr  NimEdAppWindowPrivateObj
-  NimEdAppWindowPrivateObj = object
     grid: gtk3.Grid
     settings: gio.GSettings
     gears: MenuButton
     searchentry: SearchEntry
+    searchcountlabel: Label
+    headerbar: Headerbar
     savebutton: Button
+    openbutton: Button
     buffers: GList
+    views: GList
+    target: Notebook
 
-gDefineTypeWithPrivate(NimEdAppWindow, applicationWindowGetType())
+  NimEdAppWindowClass = ptr NimEdAppWindowClassObj
+  NimEdAppWindowClassObj = object of gtk3.ApplicationWindowClassObj
+
+gDefineType(NimEdAppWindow, applicationWindowGetType())
 
 template typeNimEdAppWindow*(): expr = nimEdAppWindowGetType()
 
@@ -73,9 +79,7 @@ type
     idleScroll: cuint
     searchSettings: SearchSettings
     searchContext: SearchContext
-
-  NimViewPrivate = ptr NimViewPrivateObj
-  NimViewPrivateObj = object
+    label: Label
 
   NimViewClass = ptr NimViewClassObj
   NimViewClassObj = object of gtksource.ViewClassObj
@@ -90,18 +94,22 @@ proc nimView(obj: GPointer): NimView =
 proc isNimView*(obj: GPointer): GBoolean =
   gTypeCheckInstanceType(obj, typeNimView)
 
-# this hack is from gedit 3.20
-proc scrollToCursor(v: GPointer): GBoolean {.cdecl.} =
-  let v = nimView(v)
-  let buffer = gtksource.buffer(v.getBuffer) # caution: v.buffer is a cast!
-  v.scrollToMark(buffer.insert, withinMargin = 0.25, useAlign = false, xalign = 0, yalign = 0)
-  v.idleScroll = 0
-  return G_SOURCE_REMOVE
-
 proc nimViewDispose(obj: GObject) {.cdecl.} =
   gObjectClass(nimViewParentClass).dispose(obj)
 
-proc nimViewFinalize(gobject: GObject) {.cdecl.}
+proc freeNVE(data: Gpointer) {.cdecl.} =
+  let e = cast[ptr NimViewError](data)
+  discard glib.free(e.gs, true)
+  glib.free(data)
+
+proc freeErrors(v: var NimView) {.cdecl.} =
+  glib.freeFull(v.errors, freeNVE)
+  v.errors = nil
+
+proc nimViewFinalize(gobject: GObject) {.cdecl.} =
+  var self = nimView(gobject)
+  self.freeErrors
+  gObjectClass(nimViewParentClass).finalize(gobject)
 
 proc nimViewClassInit(klass: NimViewClass) =
   klass.dispose = nimViewDispose
@@ -134,19 +142,57 @@ proc addError(v: NimView, s: cstring; line, col: int): int =
   v.errors = glib.prepend(v.errors, el)
   return i
 
-proc freeNVE(data: Gpointer) {.cdecl.} =
-  let e = cast[ptr NimViewError](data)
-  discard glib.free(e.gs, true)
-  glib.free(data)
+type
+  NimViewBuffer = ptr NimViewBufferObj
+  NimViewBufferObj = object of gtksource.BufferObj
+    path: cstring
+    defView: bool # buffer is from "Goto Definition", we may replace it
 
-proc freeErrors(v: var NimView) {.cdecl.} =
-  glib.freeFull(v.errors, freeNVE)
-  v.errors = nil
+  NimViewBufferClass = ptr NimViewBufferClassObj
+  NimViewBufferClassObj = object of gtksource.BufferClassObj
 
-proc nimViewFinalize(gobject: GObject) =
-  var self = nimView(gobject)
-  self.freeErrors
-  gObjectClass(nimViewParentClass).finalize(gobject)
+gDefineType(NimViewBuffer, gtksource.bufferGetType())
+
+template typeNimViewBuffer*(): expr = nimViewBufferGetType()
+
+proc nimViewBuffer(obj: GPointer): NimViewBuffer =
+  gTypeCheckInstanceCast(obj, nimViewBufferGetType(), NimViewBufferObj)
+
+proc isNimViewBuffer*(obj: GPointer): GBoolean =
+  gTypeCheckInstanceType(obj, typeNimViewBuffer)
+
+proc nimViewBufferDispose(obj: GObject) {.cdecl.} =
+  gObjectClass(nimViewBufferParentClass).dispose(obj)
+
+proc nimViewBufferFinalize(gobject: GObject) {.cdecl.} =
+  free(nimViewBuffer(gobject).path)
+  gObjectClass(nimViewBufferParentClass).finalize(gobject)
+
+proc nimViewBufferClassInit(klass: NimViewBufferClass) =
+  klass.dispose = nimViewBufferDispose
+  klass.finalize = nimViewBufferFinalize
+
+proc setPath(buffer: NimViewBuffer; str: cstring) =
+  free(buffer.path)
+  buffer.path = dup(str)
+
+proc nimViewBufferInit(self: NimViewBuffer) =
+  discard
+
+proc newNimViewBuffer(language: gtksource.Language): NimViewBuffer =
+  nimViewBuffer(newObject(nimViewBufferGetType(), "tag-table", nil, "language", language, nil))
+
+proc buffer(view: NimView): NimViewBuffer =
+  nimViewBuffer(view.getBuffer)
+
+# this hack is from gedit 3.20
+# this version is not fully correct, problem is when program exits while scrolling. Have to check gedit code...
+proc scrollToCursor(v: GPointer): GBoolean {.cdecl.} =
+  let v = nimView(v)
+  let buffer = v.buffer
+  v.scrollToMark(buffer.insert, withinMargin = 0.25, useAlign = false, xalign = 0, yalign = 0)
+  v.idleScroll = 0
+  return G_SOURCE_REMOVE
 
 type
   Provider = ptr ProviderObj
@@ -166,7 +212,7 @@ type
 proc providerIfaceInit(iface: CompletionProviderIface) {.cdecl.}
 
 # typeIface: The GType of the interface to add
-# ifaceOnit: The interface init function
+# ifaceInit: The interface init function
 proc gImplementInterfaceStr*(typeIface, ifaceInit: string): string =
   """
 var gImplementInterfaceInfo = GInterfaceInfoObj(interfaceInit: cast[GInterfaceInitFunc]($2),
@@ -184,7 +230,7 @@ template typeProvider*(): expr = providerGetType()
 proc provider(obj: GObject): Provider =
   gTypeCheckInstanceCast(obj, providerGetType(), ProviderObj)
 
-template isProvider*(obj: expr): expr =
+proc isProvider*(obj: expr): bool =
   gTypeCheckInstanceType(obj, typeProvider)
 
 proc providerGetName(provider: CompletionProvider): cstring {.cdecl.} =
@@ -229,9 +275,6 @@ type
   NimEdAppClass = ptr NimEdAppClassObj
   NimEdAppClassObj = object of ApplicationClassObj
 
-  NimEdAppPrivate = ptr NimEdAppPrivateObj
-  NimEdAppPrivateObj = object
-
 gDefineType(NimEdApp, gtk3.applicationGetType())
 
 proc nimEdAppInit(self: NimEdApp) = discard
@@ -244,16 +287,28 @@ proc nimEdApp(obj: GPointer): NimEdApp =
 proc isNimEdApp*(obj: GPointer): GBoolean =
   gTypeCheckInstanceType(obj, typeNimEdApp)
 
-# unused dummy proc
-proc duper(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  echo "duper"
-
 proc lastActiveViewFromWidget(w: Widget): NimView =
   nimEdApp(gtk3.window(w.toplevel).application).lastActiveView
 
+proc goto(view: var NimView; line, column: int; mark = false)
+
 proc onSearchentrySearchChanged(entry: SearchEntry; userData: GPointer) {.exportc, cdecl.} =
-  let view: NimView = entry.lastActiveViewFromWidget
+  var view: NimView = entry.lastActiveViewFromWidget
+  let text = $entry.text
+  var line: int
+  #if scanf(text, ":$i$.", line):# and line >= 0: # will work for Nim > 0.14.2 only
+  #  echo "mach", line
+  if text[0] == ':' and text.len < 9: # avoid overflow trap
+    let parsed = parseInt(text, line, start = 1)
+    if parsed > 0 and parsed + 1 == text.len and line >= 0:
+      goto(view, line, 0)
+      return
   view.searchSettings.setSearchText(entry.text)
+  let buffer = view.buffer
+  var startIter, endIter, iter: TextIterObj
+  buffer.getIterAtMark(iter, buffer.insert)
+  if view.searchContext.forward(iter, startIter, endIter):
+    discard view.scrollToIter(startIter, withinMargin = 0.2, useAlign = true, xalign = 1, yalign = 0.5)
 
 # 1.0. >> abs, int, biggestInt, ...
 # current problem is, that we may get a lot of templates, see
@@ -272,7 +327,7 @@ proc getMethods(completionProvider: CompletionProvider; context: CompletionConte
       buffer.getStartIter(startIter)
       buffer.getEndIter(endIter)
       let text = buffer.text(startIter, endIter, includeHiddenChars = true)
-      let filepath: string = $view.name
+      let filepath: string = $view.buffer.path
       let dirtypath = saveDirty(filepath, text)
       if dirtypath != nil:
         let socket = newSocket()
@@ -344,148 +399,70 @@ proc initCompletion*(view: gtksource.View; completion: gtksource.Completion; win
   nsProvider.win = win
   nsProvider.name = dup("Fixed Provider")
   discard addProvider(completion, nsProvider, error)
-  
+
+proc nimEdAppWindowSmartOpen(win: NimEdAppWindow; file: gio.GFile): NimView {.discardable.}
+
+proc open(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  var dialog = newFileChooserDialog("Open File", nimEdAppWindow(app), FileChooserAction.OPEN,
+                                    "Cancel", ResponseType.CANCEL, "Open", ResponseType.ACCEPT, nil);
+  var res = dialog.run
+  if res == ResponseType.ACCEPT.ord:
+    var filename = fileChooser(dialog).filename
+    let file: GFile = newFileForPath(filename)
+    nimEdAppWindowSmartOpen(nimEdAppWindow(app), file)
+    free(filename)
+  dialog.destroy
+
 proc save(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
   var startIter, endIter: TextIterObj
-  doAssert isNimEdAppWindow(app)
   let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
-  let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
+  let buffer = view.buffer
   buffer.getStartIter(startIter)
   buffer.getEndIter(endIter)
   let text = buffer.text(startIter, endIter, includeHiddenChars = true)
   var gerror: GError
-  let gfile: GFile = newFileForPath(view.name) # never fails
+  let gfile: GFile = newFileForPath(buffer.path) # never fails
   let res = gfile.replaceContents(text, len(text), etag = nil, makeBackup = false, GFileCreateFlags.NONE, newEtag = nil, cancellable = nil, gerror)
   objectUnref(gfile)
-  if not res:
+  if res:
+    buffer.modified = false
+  else:
     error(gerror.message)
 
-var winAppEntries = [
-  gio.GActionEntryObj(name: "duper", activate: duper, parameterType: nil, state: nil, changeState: nil),
-  gio.GActionEntryObj(name: "save", activate: save, parameterType: nil, state: nil, changeState: nil)]
+proc markTargetAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  let win = nimEdAppWindow(app)
+  let view: NimView = nimEdApp(win.getApplication).lastActiveView
+  let scrolled: ScrolledWindow = scrolledWindow(view.parent)
+  let notebook: Notebook = notebook(scrolled.parent)
+  win.target = notebook
 
-proc settingsChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWindow) {.cdecl.} =
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
-  let manager = styleSchemeManagerGetDefault()
-  let style = getScheme(manager, getString(settings, key))
-  if style != nil:
-    var p: GList = priv.buffers
-    while p != nil:
-      gtksource.buffer(p.data).setStyleScheme(style)
-      p = p.next
+proc saveAsAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  var dialog = newFileChooserDialog("Save File", nimEdAppWindow(app), FileChooserAction.SAVE,
+                                    "Cancel", ResponseType.CANCEL, "SAVE", ResponseType.ACCEPT, nil);
+  var res = dialog.run
+  let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
+  if res == ResponseType.ACCEPT.ord:
+    var filename = fileChooser(dialog).filename
+    view.buffer.path = filename.dup
+    free(filename)
+  dialog.destroy
+  save(action, parameter, app)
 
-# TODO: check
-proc nimEdAppWindowInit(self: NimEdAppWindow) =
-  var
-    builder: Builder
-    menu: gio.GMenuModel
-    action: gio.GAction
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(self)
-  initTemplate(self)
-  priv.settings = newSettings("org.gtk.ned")
-  discard gSignalConnect(priv.settings, "changed::styleschemesettingsid",
-                   gCallback(settingsChanged), self)
-  builder = newBuilder(resourcePath = "/org/gtk/ned/gears-menu.ui")
-  menu = gMenuModel(getObject(builder, "menu"))
-  setMenuModel(priv.gears, menu)
-  objectUnref(builder)
-  addActionEntries(gio.gActionMap(self), addr winAppEntries[0], cint(len(winAppEntries)), self)
-  objectSet(settingsGetDefault(), "gtk-shell-shows-app-menu", true, nil)
-  setShowMenubar(self, true)
+proc findViewWithBuffer(views: GList; buffer: NimViewBuffer): NimView =
+  var p: GList = views
+  while p != nil:
+    if nimView(p.data).buffer == buffer:
+      return nimView(p.data)
+    p = p.next
 
-proc nimEdAppWindowDispose(obj: GObject) {.cdecl.} =
-  gObjectClass(nimEdAppWindowParentClass).dispose(obj)
-
-proc nimEdAppWindowClassInit(klass: NimEdAppWindowClass) =
-  klass.dispose = nimEdAppWindowDispose
-  setTemplateFromResource(klass, "/org/gtk/ned/window.ui")
-  widgetClassBindTemplateChildPrivate(klass, NimEdAppWindow, gears)
-  widgetClassBindTemplateChildPrivate(klass, NimEdAppWindow, searchentry)
-  widgetClassBindTemplateChildPrivate(klass, NimEdAppWindow, savebutton)
-  widgetClassBindTemplateChildPrivate(klass, NimEdAppWindow, grid)
-
-proc nimEdAppWindowNew*(app: NimEdApp): NimEdAppWindow =
-  nimEdAppWindow(newObject(typeNimEdAppWindow, "application", app, nil))
-
-type
-  NedAppPrefs* = ptr NedAppPrefsObj
-  NedAppPrefsObj = object of gtk3.DialogObj
-
-  NedAppPrefsClass = ptr NedAppPrefsClassObj
-  NedAppPrefsClassObj = object of gtk3.DialogClassObj
-
-  NedAppPrefsPrivate = ptr NedAppPrefsPrivateObj
-  NedAppPrefsPrivateObj = object
-    settings: gio.GSettings
-    font: gtk3.Widget
-    style: gtk3.Widget
-    buffer: gtksource.Buffer
-    styleScheme: gtksource.StyleScheme
-
-gDefineTypeWithPrivate(NedAppPrefs, dialogGetType())
-
-template typeNedAppPrefs*(): expr = nedAppPrefsGetType()
-
-proc nedAppPrefs(obj: GObject): NedAppPrefs =
-  gTypeCheckInstanceCast(obj, nedAppPrefsGetType(), NedAppPrefsObj)
-
-proc isNedAppPrefs*(obj: GObject): GBoolean =
-  gTypeCheckInstanceType(obj, typeNedAppPrefs)
-
-proc styleSchemeChanged(sscb: StyleSchemeChooserButton, pspec: GParamSpec, settings: gio.GSettings) {.cdecl.} =
-  discard settings.setString(StyleSchemeSettingsID, styleSchemeChooser(sscb).getStyleScheme.id)
-
-proc nedAppPrefsInit(self: NedAppPrefs) =
-  let priv: NedAppPrefsPrivate = nedAppPrefsGetInstancePrivate(self)
-  initTemplate(self)
-  priv.settings = newSettings("org.gtk.ned")
-  `bind`(priv.settings, "font", priv.font, "font", gio.GSettingsBindFlags.DEFAULT)
-  discard gSignalConnect(priv.style, "notify::style-scheme", gCallback(styleSchemeChanged), priv.settings)
-
-proc nedAppPrefsDispose(obj: gobject.GObject) {.cdecl.} =
-  let priv: NedAppPrefsPrivate = nedAppPrefsGetInstancePrivate(nedAppPrefs(obj))
-  clearObject(GObject(priv.settings))
-  priv.settings = nil # https://github.com/nim-lang/Nim/issues/3449
-  gObjectClass(nedAppPrefsParentClass).dispose(obj)
-
-proc nedAppPrefsClassInit(klass: NedAppPrefsClass) =
-  klass.dispose = nedAppPrefsDispose
-  setTemplateFromResource(klass, "/org/gtk/ned/prefs.ui")
-  # we may replace function call above by this code to avoid use of resource:
-  #var
-  #  buffer: cstring
-  #  length: gsize
-  #  error: glib.GError = nil
-  #  gbytes: glib.GBytes = nil
-  #if not gFileGetContents("prefs.ui", buffer, length, error):
-  #  gCritical("Unable to load prefs.ui \'%s\': %s", gObjectClassName(klass), error.message)
-  #  free(error)
-  #  return
-  #gbytes = gBytesNew(buffer, length)
-  #setTemplate(klass, gbytes)
-  #gFree(buffer)
-  # done
-  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, font)
-  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, style)
-
-proc nedAppPrefsNew*(win: NimEdAppWindow): NedAppPrefs =
-  nedAppPrefs(newObject(typeNedAppPrefs, "transient-for", win, "use-header-bar", true, nil))
-
-proc preferencesActivated(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  let win: gtk3.Window = getActiveWindow(application(app))
-  let prefs: NedAppPrefs = nedAppPrefsNew(nimEdAppWindow(win))
-  present(prefs)
-
-proc closeTab(button: Button; userData: GPointer) {.cdecl.} =
-  let win = nimEdAppWindow(button.toplevel)
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
-  let grid: Grid = priv.grid
-  let notebook: Notebook = notebook(grid.childAt(0, 1))
-  let i = cast[cint](userdata)
-  if i >= 0:
-    var b = nimView(scrolledWindow(notebook.nthPage(i)).child).getBuffer
-    priv.buffers = priv.buffers.remove(b)
-    notebook.removePage(i)
+proc closetabAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  let win = nimEdAppWindow(app)
+  let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
+  let scrolled: ScrolledWindow = scrolledWindow(view.parent)
+  let notebook: Notebook = notebook(scrolled.parent)
+  let parent = container(notebook.parent)
+  if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
+  notebook.remove(scrolled)
 
 proc showErrorTooltip(w: Widget; x, y: cint; keyboardMode: GBoolean; tooltip: Tooltip; data: GPointer): GBoolean {.cdecl.} =
   var bx, by, trailing: cint
@@ -510,50 +487,34 @@ proc showErrorTooltip(w: Widget; x, y: cint; keyboardMode: GBoolean; tooltip: To
       p = p.next
   return GFALSE
 
+proc onGrabFocus(widget: Widget; userData: GPointer) {.cdecl.} =
+  let win = nimEdAppWindow(userData)
+  win.headerbar.subtitle = nimView(widget).buffer.path
+  if win.headerbar.subtitle.isNil:
+    win.headerbar.title = "Unsaved"
+  else:
+    win.headerbar.title = glib.basename(win.headerbar.subtitle) # deprecated, no copy
+  nimEdApp(gtk3.window(widget.toplevel).application).lastActiveView = nimView(widget)
+
+proc closeTab(button: Button; userData: GPointer) {.cdecl.} =
+  let win = nimEdAppWindow(button.toplevel)
+  let notebook: Notebook = notebook(button.parent.parent)
+  let scrolled: ScrolledWindow = scrolledWindow(userData)
+  let parent = container(notebook.parent)
+  if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
+  notebook.remove(scrolled)
+
 proc onBufferModified(textBuffer: TextBuffer; userData: GPointer) {.cdecl.} =
   var l: Label = label(userdata)
-  var s: string = $l.text
-  if textBuffer.modified:
-    if s[0] != '*': s.insert("*")
+  var s: string
+  let h = nimViewBuffer(textBuffer).path
+  if h.isNil:
+    s = "Unsaved"
   else:
-    if s[0] == '*': s.delete(0, 0)
+    s = ($h).extractFilename
+  if textBuffer.modified:
+    s.insert("*")
   l.text = s
-
-proc setVisibleChild(nb: Notebook; c: Widget): bool =
-  var i: cint = 0
-  var w: Widget
-  while true:
-    w = nb.getNthPage(i)
-    if w.isNil: break
-    if w == c:
-      nb.setCurrentPage(i)
-      return true
-    inc(i)
-  return false
-
-proc setVisibleChildName(nb: Notebook; n: cstring): bool =
-  var i: cint = 0
-  var w: Widget
-  while true:
-    w = nb.getNthPage(i)
-    if w.isNil: break
-    if w.name == n:
-      nb.setCurrentPage(i)
-      return true
-    inc(i)
-  return false
-
-proc setVisibleViewName(nb: Notebook; n: cstring): NimView =
-  var i: cint = 0
-  var w: Widget
-  while true:
-    w = nb.getNthPage(i)
-    if w.isNil: break
-    if scrolledWindow(w).child.name == n:
-      nb.setCurrentPage(i)
-      return nimView(scrolledWindow(w).child)
-    inc(i)
-  return nil
 
 proc advanceErrorWord(ch: GUnichar, userdata: Gpointer): GBoolean {.cdecl.} = gNot(isalnum(ch))
 
@@ -597,99 +558,527 @@ proc markLocation(view: var NimView; ln, cn: int) =
   buffer.applyTag(tag, startIter, endIter)
   view.showLinemarks = true
 
-proc onGrabFocus(widget: Widget; userData: GPointer) {.cdecl.} =
-  nimEdApp(gtk3.window(widget.toplevel).application).lastActiveView = nimView(widget)
-
-proc nimEdAppWindowOpen*(win: NimEdAppWindow; notebook: Notebook; file: gio.GFile; line: cint = 0; column: cint = 0) =
-  var
-    contents: cstring
-    buffer: gtksource.Buffer
-    length: Gsize
-    error: GError
-    startIter, endIter: TextIterObj
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
-  let basename = file.basename
-  var view: NimView = notebook.setVisibleViewName(file.path)
-  if view.isNil:
-    let scrolled: ScrolledWindow = newScrolledWindow(nil, nil)
-    scrolled.hexpand = true
-    scrolled.vexpand = true
-    let language: gtksource.Language = languageManagerGetDefault().guessLanguage(basename, nil)
-    if language.isNil:
-      buffer = gtksource.newBuffer(table = nil)
-    else:
-      buffer = gtksource.newBuffer(language)
-    priv.buffers = glib.prepend(priv.buffers, buffer)
-    view = newNimView(buffer)
-    if nimEdApp(gtk3.window(win.toplevel).application).lastActiveView.isNil:
-      nimEdApp(gtk3.window(win.toplevel).application).lastActiveView = view
-    discard buffer.createTag(ErrorTagName, "underline", pango.Underline.Error, nil)
-    for i in 0 .. MaxErrorTags:
-      discard buffer.createTag($i, nil)
-    view.name = file.path
-    view.hasTooltip = true
-    discard gSignalConnect(view, "query-tooltip", gCallback(showErrorTooltip), nil)
-    discard gSignalConnect(view, "grab_focus", gCallback(onGrabFocus), nil)
-    let completion: Completion = getCompletion(view)
-    initCompletion(view, completion, win)
-    view.editable = true
-    view.cursorVisible = true
-    scrolled.add(view)
-    scrolled.showAll
-    # from 3.20 gedit-documents-panel.c
-    let closeButton = button(newObject(typeButton, "relief", ReliefStyle.NONE, "focus-on-click", false, nil))
-    let context = closeButton.getStyleContext
-    context.addClass("flat")
-    context.addClass("small-button")
-    let icon = newThemedIconWithDefaultFallbacks("window-close-symbolic")
-    let image: Image = newImage(icon, IconSize.MENU)
-    objectUnref(icon)
-    closeButton.add(image)
-    discard gSignalConnect(closeButton, "clicked", gCallback(closeTab), cast[GPointer](notebook.nPages))
-    let label = newLabel(basename)
-    label.ellipsize = pango.EllipsizeMode.END
-    label.halign = Align.START
-    label.valign = Align.CENTER
-    discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), label)
-    let box = newBox(Orientation.HORIZONTAL, spacing = 0)
-    box.packStart(label, expand = true, fill = false, padding = 0)
-    box.packStart(closeButton, expand = false, fill = false, padding = 0)
-    box.showAll
-    let pageNum = notebook.appendPage(scrolled, box)
-    notebook.currentPage = pageNum
-    notebook.childSet(scrolled, "tab-expand", true, nil)
-    if loadContents(file, nil, contents, length, nil, error):
-      buffer.setText(contents, length.cint)
-      free(contents)
-    let tag: gtk3.TextTag = buffer.createTag(nil, nil)
-    `bind`(priv.settings, "font", tag, "font", gio.GSettingsBindFlags.DEFAULT)
-    let scheme: cstring  = getString(priv.settings, StyleSchemeSettingsID)
-    if scheme != nil:
-      let manager = styleSchemeManagerGetDefault()
-      let style = getScheme(manager, scheme)
-      if style != nil:
-        buffer.setStyleScheme(style)
-    buffer.getStartIter(startIter)
-    buffer.getEndIter(endIter)
-    buffer.applyTag(tag, startIter, endIter)
-    buffer.modified = false
-    free(basename)
-  else:
-    buffer = gtksource.buffer(view.getBuffer)
+proc scrollTo(view: var NimView; line: cint = 0; column: cint = 0) =
+  var iter: TextIterObj
   if line > 1:
-    buffer.getIterAtLineIndex(startIter, line - 1, column - 1)
-    buffer.placeCursor(startIter)
+    let buffer = nimViewBuffer(view.getBuffer)
+    buffer.getIterAtLineIndex(iter, line - 1, column - 1)
+    buffer.placeCursor(iter)
     if view.idleScroll == 0:
       view.idleScroll = idleAdd(GSourceFunc(scrollToCursor), view)
     markLocation(view, line - 1, column - 1)
+
+proc fixUnnamed(buffer: NimViewBuffer; name: cstring) =
+  let language: gtksource.Language = languageManagerGetDefault().guessLanguage(name, nil)
+  buffer.setLanguage(language)
+
+proc loadContent(file: GFile; buffer: NimViewBuffer; settings: GSettings) =
+  var
+    startIter, endIter: TextIterObj
+    contents: cstring
+    length: Gsize
+    error: GError
+  if file != nil and loadContents(file, cancellable = nil, contents, length, etagOut = nil, error):
+    buffer.setText(contents, length.cint)
+    free(contents)
+    buffer.setPath(file.path)
+  buffer.modified = false
+
+proc getMapping(value: var GValueObj; variant: GVariant; userData: GPointer): GBoolean {.cdecl.} =
+  let b = variant.getBoolean
+  setEnum(value, b.cint)
+  return GTRUE
+
+proc updateLabelOccurrences(label: Label; pspec: GParamSpec; userData: GPointer) {.cdecl.} =
+  var selectStart, selectEnd: TextIterObj
+  var text: cstring
+  let context = searchContext(userData)
+  let buffer = context.buffer
+  let occurrencesCount = context.getOccurrencesCount
+  discard buffer.getSelectionBounds(selectStart, selectEnd)
+  let occurrencePos = context.getOccurrencePosition(selectStart, selectEnd)
+  if occurrencesCount <= 0:
+    text = dup("")
+  elif occurrencePos == -1:
+    text = dupPrintf("%d occurrences", occurrencesCount)
+  else:
+    text = dupPrintf("%d of %d", occurrencePos, occurrencesCount)
+  label.text = text
+  free(text)
+
+proc onDestroyNimView(obj: Widget; userData: GPointer) {.cdecl.} =
+  let win = nimEdAppWindow(userData)
+  let app = nimEdApp(win.getApplication)
+  if not app.isNil: # yes this happens for last view!
+    if app.lastActiveView == obj:
+      app.lastActiveView = if win.views.isNil: nil else: nimView(win.views.data)
+  var v = nimView(obj)
+  var b = v.buffer
+  win.views = win.views.remove(v)
+  if findViewWithBuffer(win.views, b).isNil:
+    win.buffers = win.buffers.remove(b)
+
+proc addViewToNotebook(win: NimEdAppWindow; notebook: Notebook; file: gio.GFile = nil, buf: NimViewBuffer = nil): NimView =
+  var
+    buffer: NimViewBuffer
+    view: NimView
+    name: cstring
+  if not file.isNil:
+    name = file.basename # we have to call free!
+  let scrolled: ScrolledWindow = newScrolledWindow(nil, nil)
+  scrolled.hexpand = true
+  scrolled.vexpand = true
+  let language: gtksource.Language = if file.isNil: nil else: languageManagerGetDefault().guessLanguage(name, nil)
+  buffer = if buf.isNil: newNimViewBuffer(language) else: buf
+  #echo "refcount"
+  #echo buffer.refCount
+  view = newNimView(buffer)
+  discard gSignalConnect(view, "destroy", gCallback(onDestroyNimView), win)
+  #echo buffer.refCount
+  `bind`(win.settings, "showlinenumbers", view, "show-line-numbers", gio.GSettingsBindFlags.GET)
+  `bind`(win.settings, "scrollbaroverlay", scrolled, "overlay-scrolling", gio.GSettingsBindFlags.GET)
+  bindWithMapping(win.settings, "scrollbarautomatic", scrolled, "vscrollbar-policy", gio.GSettingsBindFlags.GET, getMapping, nil, nil, nil)
+  bindWithMapping(win.settings, "scrollbarautomatic", scrolled, "hscrollbar-policy", gio.GSettingsBindFlags.GET, getMapping, nil, nil, nil)
+  let fontDesc = fontDescriptionFromString(getString(win.settings, "font"))
+  view.modifyFont(fontDesc)
+  free(fontDesc);
+  if buf.isNil:
+    win.buffers = glib.prepend(win.buffers, buffer)
+    win.views = glib.prepend(win.views, view)
+    discard buffer.createTag(ErrorTagName, "underline", pango.Underline.Error, nil)
+    for i in 0 .. MaxErrorTags:
+      discard buffer.createTag($i, nil)
+    if not file.isNil:
+      buffer.setPath(file.path)
+  view.hasTooltip = true
+  discard gSignalConnect(view, "query-tooltip", gCallback(showErrorTooltip), nil)
+  discard gSignalConnect(view, "grab_focus", gCallback(onGrabFocus), win)
+  let completion: Completion = getCompletion(view)
+  initCompletion(view, completion, win)
+  scrolled.add(view)
+  scrolled.showAll
+  # from 3.20 gedit-documents-panel.c
+  let closeButton = button(newObject(typeButton, "relief", ReliefStyle.NONE, "focus-on-click", false, nil))
+  let context = closeButton.getStyleContext
+  context.addClass("flat")
+  context.addClass("small-button")
+  let icon = newThemedIconWithDefaultFallbacks("window-close-symbolic")
+  let image: Image = newImage(icon, IconSize.MENU)
+  objectUnref(icon)
+  closeButton.add(image)
+  discard gSignalConnect(closeButton, "clicked", gCallback(closeTab), scrolled)
+  let label = newLabel(if file.isNil: "Unsaved".cstring else: name)
+  view.label = label
+  label.ellipsize = pango.EllipsizeMode.END
+  label.halign = Align.START
+  label.valign = Align.CENTER
+  discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), label)
+  let box = newBox(Orientation.HORIZONTAL, spacing = 0)
+  box.packStart(label, expand = true, fill = false, padding = 0)
+  box.packStart(closeButton, expand = false, fill = false, padding = 0)
+  box.showAll
+  let pageNum = notebook.appendPage(scrolled, box)
+  notebook.setTabReorderable(scrolled, true)
+  notebook.setTabDetachable(scrolled, true)
+  notebook.setGroupName("stefan")
+  notebook.currentPage = pageNum
+  notebook.childSet(scrolled, "tab-expand", true, nil)
+  if buf.isNil:
+    loadContent(file, buffer, win.settings)
+    let scheme: cstring  = getString(win.settings, StyleSchemeSettingsID)
+    if scheme != nil:
+      let manager = styleSchemeManagerGetDefault()
+      let style = getScheme(manager, scheme)
+      buffer.setStyleScheme(style)
   view.searchSettings = newSearchSettings()
   view.searchContext = newSearchContext(buffer, view.searchSettings)
+  `bind`(win.settings, "casesensitive", view.searchSettings, "case-sensitive", gio.GSettingsBindFlags.GET)
+  `bind`(win.settings, "regexenabled", view.searchSettings, "regex-enabled", gio.GSettingsBindFlags.GET)
+  `bind`(win.settings, "wraparound", view.searchSettings, "wrap-around", gio.GSettingsBindFlags.GET)
+  `bind`(win.settings, "wordboundaries", view.searchSettings, "at-word-boundaries", gio.GSettingsBindFlags.GET)
+  discard gSignalConnectSwapped(view.searchContext, "notify::occurrences-count", gCallback(updateLabelOccurrences), win.searchcountlabel)
+  free(name)
+  return view
+
+proc pageNumChanged(notebook: Notebook; child: Widget; pageNum: cuint; userData: GPointer) {.cdecl.} =
+  let win = nimEdAppWindow(userData)
+  notebook.showTabs = notebook.getNPages > 1 or getBoolean(win.settings, "showtabs")
+  if notebook.nPages == 0:
+    let parent = container(notebook.parent)
+    if not isPaned(parent): return
+    var c1 = paned(parent).child1
+    var c2 = paned(parent).child2
+    if notebook == c1: swap(c1, c2)
+    discard c1.objectRef
+    parent.remove(c1)
+    parent.remove(c2)
+    let pp = container(parent.parent)
+    pp.remove(parent)
+    pp.add(c1)
+    if isPaned(pp):
+      pp.childSet(c1, "shrink", false, nil)
+    c1.objectUnref
+
+proc getMappingTabs(value: var GValueObj; variant: GVariant; userData: GPointer): GBoolean {.cdecl.} =
+  let notebook = notebook(userData)
+  let b = variant.getBoolean or notebook.getNPages > 1
+  setBoolean(value, b)
+  return GTRUE
+
+proc split(app: Gpointer; o: Orientation) =
+  let win = nimEdAppWindow(app)
+  let view: NimView = nimEdApp(win.getApplication).lastActiveView
+  let buffer: NimViewBuffer = view.buffer
+  let scrolled: ScrolledWindow = scrolledWindow(view.parent)
+  let notebook: Notebook = notebook(scrolled.parent)
+  var allocation: AllocationObj
+  notebook.getAllocation(allocation)
+  let posi = (if o == Orientation.HORIZONTAL: allocation.width else: allocation.height) div 2
+  let parent = container(notebook.parent)
+  discard notebook.objectRef
+  parent.remove(notebook)
+  let paned: Paned = newPaned(o)
+  paned.pack1(notebook, resize = true, shrink = false)
+  let newbook = newNotebook()
+  discard gSignalConnect (newbook, "page-added", gCallback(pageNumChanged), win)
+  discard gSignalConnect (newbook, "page-removed", gCallback(pageNumChanged), win)
+  bindWithMapping(win.settings, "showtabs", newbook, "show-tabs", gio.GSettingsBindFlags.GET, getMappingTabs, nil, newbook, nil)
+  discard addViewToNotebook(win = nimEdAppWindow(app), notebook = newbook, file = nil)
+  paned.pack2(newbook, resize = true, shrink = false)
+  paned.position = posi
+  parent.add(paned)
+  parent.show_all
+  notebook.objectUnref
+
+proc hsplit(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  split(app, Orientation.HORIZONTAL)
+
+proc vsplit(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  split(app, Orientation.VERTICAL)
+
+var winAppEntries = [
+  gio.GActionEntryObj(name: "hsplit", activate: hsplit, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "vsplit", activate: vsplit, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "save", activate: save, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "closetabAction", activate: closetabAction, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "saveAsAction", activate: saveAsAction, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "markTargetAction", activate: markTargetAction, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "open", activate: open, parameterType: nil, state: nil, changeState: nil)]
+
+proc settingsChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWindow) {.cdecl.} =
+  let manager = styleSchemeManagerGetDefault()
+  let style = getScheme(manager, getString(settings, key))
+  if style != nil:
+    var p: GList = win.buffers
+    while p != nil:
+      gtksource.buffer(p.data).setStyleScheme(style)
+      p = p.next
+
+proc fontSettingChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWindow) {.cdecl.} =
+  let fontDesc = fontDescriptionFromString(getString(win.settings, key))
+  var p: GList = win.views
+  while p != nil:
+    nimView(p.data).modifyFont(fontDesc)
+    p = p.next
+  free(fontDesc);
+
+# TODO: check
+proc nimEdAppWindowInit(self: NimEdAppWindow) =
+  var
+    builder: Builder
+    menu: gio.GMenuModel
+    action: gio.GAction
+  initTemplate(self)
+  self.settings = newSettings("org.gtk.ned")
+  discard gSignalConnect(self.settings, "changed::styleschemesettingsid",
+                   gCallback(settingsChanged), self)
+  discard gSignalConnect(self.settings, "changed::fontsettingsid",
+                   gCallback(fontSettingChanged), self)
+  builder = newBuilder(resourcePath = "/org/gtk/ned/gears-menu.ui")
+  menu = gMenuModel(getObject(builder, "menu"))
+  setMenuModel(self.gears, menu)
+  objectUnref(builder)
+  addActionEntries(gio.gActionMap(self), addr winAppEntries[0], cint(len(winAppEntries)), self)
+  objectSet(settingsGetDefault(), "gtk-shell-shows-app-menu", true, nil)
+  setShowMenubar(self, true)
+
+proc nimEdAppWindowDispose(obj: GObject) {.cdecl.} =
+  gObjectClass(nimEdAppWindowParentClass).dispose(obj)
+
+proc nimEdAppWindowClassInit(klass: NimEdAppWindowClass) =
+  klass.dispose = nimEdAppWindowDispose
+  setTemplateFromResource(klass, "/org/gtk/ned/window.ui")
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, gears)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, searchentry)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, searchcountlabel)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, headerbar)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, savebutton)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, openbutton)
+  widgetClassBindTemplateChild(klass, NimEdAppWindow, grid)
+
+proc nimEdAppWindowNew*(app: NimEdApp): NimEdAppWindow =
+  nimEdAppWindow(newObject(typeNimEdAppWindow, "application", app, nil))
+
+# Here we use a type with private component. This is mainly to test and
+# demonstrate that it works. Generally putting new fields into
+# NedAppPrefsObj as done for the types above is simpler.
+type
+  NedAppPrefs* = ptr NedAppPrefsObj
+  NedAppPrefsObj = object of gtk3.DialogObj
+
+  NedAppPrefsClass = ptr NedAppPrefsClassObj
+  NedAppPrefsClassObj = object of gtk3.DialogClassObj
+
+  NedAppPrefsPrivate = ptr NedAppPrefsPrivateObj
+  NedAppPrefsPrivateObj = object
+    settings: gio.GSettings
+    font: gtk3.Widget
+    showtabs: gtk3.Widget
+    showlinenumbers: gtk3.Widget
+    casesensitive: gtk3.Widget
+    regexenabled: gtk3.Widget
+    wraparound: gtk3.Widget
+    wordboundaries: gtk3.Widget
+    reusedefinition: gtk3.Widget
+    scrollbarautomatic: gtk3.Widget
+    scrollbaroverlay: gtk3.Widget
+    style: gtk3.Widget
+    buffer: gtksource.Buffer
+    styleScheme: gtksource.StyleScheme
+
+gDefineTypeWithPrivate(NedAppPrefs, dialogGetType())
+
+template typeNedAppPrefs*(): expr = nedAppPrefsGetType()
+
+proc nedAppPrefs(obj: GObject): NedAppPrefs =
+  gTypeCheckInstanceCast(obj, nedAppPrefsGetType(), NedAppPrefsObj)
+
+proc isNedAppPrefs*(obj: GObject): GBoolean =
+  gTypeCheckInstanceType(obj, typeNedAppPrefs)
+
+proc styleSchemeChanged(sscb: StyleSchemeChooserButton, pspec: GParamSpec, settings: gio.GSettings) {.cdecl.} =
+  discard settings.setString(StyleSchemeSettingsID, styleSchemeChooser(sscb).getStyleScheme.id)
+
+proc fontChanged(fbcb: FontButton, pspec: GParamSpec, settings: gio.GSettings) {.cdecl.} =
+  discard settings.setString(FontSettingsID, fontButton(fbcb).getFontName)
+
+proc nedAppPrefsInit(self: NedAppPrefs) =
+  let priv: NedAppPrefsPrivate = nedAppPrefsGetInstancePrivate(self)
+  initTemplate(self)
+  priv.settings = newSettings("org.gtk.ned")
+  `bind`(priv.settings, "font", priv.font, "font", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, StyleSchemeSettingsID, priv.style, "label", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "showtabs", priv.showtabs, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "reusedefinition", priv.reusedefinition, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "showlinenumbers", priv.showlinenumbers, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "casesensitive", priv.casesensitive, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "regexenabled", priv.regexenabled, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "wordboundaries", priv.wordboundaries, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "wraparound", priv.wraparound, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "scrollbaroverlay", priv.scrollbaroverlay, "active", gio.GSettingsBindFlags.DEFAULT)
+  `bind`(priv.settings, "scrollbarautomatic", priv.scrollbarautomatic, "active", gio.GSettingsBindFlags.DEFAULT)
+  discard gSignalConnect(priv.style, "notify::style-scheme", gCallback(styleSchemeChanged), priv.settings)
+  discard gSignalConnect(priv.font, "notify::font", gCallback(fontChanged), priv.settings)
+
+proc nedAppPrefsDispose(obj: gobject.GObject) {.cdecl.} =
+  let priv: NedAppPrefsPrivate = nedAppPrefsGetInstancePrivate(nedAppPrefs(obj))
+  clearObject(GObject(priv.settings))
+  priv.settings = nil # https://github.com/nim-lang/Nim/issues/3449
+  gObjectClass(nedAppPrefsParentClass).dispose(obj)
+
+proc nedAppPrefsClassInit(klass: NedAppPrefsClass) =
+  klass.dispose = nedAppPrefsDispose
+  setTemplateFromResource(klass, "/org/gtk/ned/prefs.ui")
+  # we may replace function call above by this code to avoid use of resource:
+  #var
+  #  buffer: cstring
+  #  length: gsize
+  #  error: glib.GError = nil
+  #  gbytes: glib.GBytes = nil
+  #if not gFileGetContents("prefs.ui", buffer, length, error):
+  #  gCritical("Unable to load prefs.ui \'%s\': %s", gObjectClassName(klass), error.message)
+  #  free(error)
+  #  return
+  #gbytes = gBytesNew(buffer, length)
+  #setTemplate(klass, gbytes)
+  #gFree(buffer)
+  # done
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, font)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, showtabs)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, reusedefinition)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, showlinenumbers)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, casesensitive)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, regexenabled)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, wordboundaries)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, wraparound)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, scrollbaroverlay)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, scrollbarautomatic)
+  widgetClassBindTemplateChildPrivate(klass, NedAppPrefs, style)
+
+proc nedAppPrefsNew*(win: NimEdAppWindow): NedAppPrefs =
+  nedAppPrefs(newObject(typeNedAppPrefs, "transient-for", win, "use-header-bar", true, nil))
+
+proc preferencesActivated(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  let win: gtk3.Window = getActiveWindow(application(app))
+  let prefs: NedAppPrefs = nedAppPrefsNew(nimEdAppWindow(win))
+  present(prefs)
+
+proc setVisibleChild(nb: Notebook; c: Widget): bool =
+  var i: cint = 0
+  var w: Widget
+  while true:
+    w = nb.getNthPage(i)
+    if w.isNil: break
+    if w == c:
+      nb.setCurrentPage(i)
+      return true
+    inc(i)
+  return false
+
+proc setVisibleChildName(nb: Notebook; n: cstring): bool =
+  var i: cint = 0
+  var w: Widget
+  while true:
+    w = nb.getNthPage(i)
+    if w.isNil: break
+    if w.name == n:
+      nb.setCurrentPage(i)
+      return true
+    inc(i)
+  return false
+
+proc setVisibleViewName(nb: Notebook; n: cstring): NimView =
+  var i: cint = 0
+  var w: Widget
+  while true:
+    w = nb.getNthPage(i)
+    if w.isNil: break
+    if scrolledWindow(w).child.name == n:
+      nb.setCurrentPage(i)
+      return nimView(scrolledWindow(w).child)
+    inc(i)
+  return nil
+
+proc findViewWithPath(views: GList; path: cstring): NimView =
+  var p: GList = views
+  while p != nil:
+    if nimView(p.data).buffer.path == path:
+      return nimView(p.data)
+    p = p.next
+
+proc findViewWithDef(views: GList): NimView =
+  var p: GList = views
+  while p != nil:
+    if nimView(p.data).buffer.defView:
+      return nimView(p.data)
+    p = p.next
+
+proc findBufferWithPath(buffers: GList; path: cstring): NimViewBuffer =
+  var p: GList = buffers
+  while p != nil:
+    if nimViewBuffer(p.data).path == path:
+      return nimViewBuffer(p.data)
+    p = p.next
+
+proc nimEdAppWindowDefOpen(win: NimEdAppWindow; file: gio.GFile): NimView =
+  var
+    view: NimView
+    notebook: Notebook
+  view = findViewWithPath(win.views, file.path)
+  if not view.isNil: return view
+  if win.settings.getBoolean("reusedefinition"):
+    view = findViewWithDef(win.views)
+  if view.isNil:
+    view = findViewWithPath(win.views, nil) # "Unused" buffer
+    if view.isNil or view.buffer.charCount > 0:
+      view = nil
+    else:
+      fixUnnamed(view.buffer, file.basename)
+  if not view.isNil:
+    loadContent(file, view.buffer, win.settings)
+  else:
+    if win.target.isNil:
+      let lastActive: NimView = nimEdApp(win.getApplication).lastActiveView
+      if lastActive.isNil: # currently lastActive is always valid
+        let grid: Grid = win.grid
+        notebook = gtk3.notebook(grid.childAt(0, 1))
+      else:
+        notebook = gtk3.notebook(lastActive.parent.parent)
+    else:
+      notebook = win.target
+    view = addViewToNotebook(win, notebook, file, buf = nil)
+  return view
+
+# support new view for old buffer
+proc nimEdAppWindowSmartOpen(win: NimEdAppWindow; file: gio.GFile): NimView =
+  var
+    view: NimView
+    buffer: NimViewBuffer
+    notebook: Notebook
+  view = findViewWithPath(win.views, file.path)
+  if not view.isNil:
+    buffer = view.buffer # multi view
+  let lastActive: NimView = nimEdApp(win.getApplication).lastActiveView
+  if lastActive.isNil:
+    let grid: Grid = win.grid
+    notebook = gtk3.notebook(grid.childAt(0, 1))
+  else:
+    notebook = gtk3.notebook(lastActive.parent.parent)
+  if not lastActive.isNil and lastActive.buffer.path.isNil and lastActive.buffer.charCount == 0:
+    view = lastActive
+    fixUnnamed(view.buffer, file.basename)
+    if buffer.isNil:
+      loadContent(file, view.buffer, win.settings)
+    else:
+      view.setBuffer(buffer)
+      view.label.text = basename(buffer.path)
+      discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), view.label)
+  else:
+    view = addViewToNotebook(win, notebook, file, buffer)
+    if lastActive.isNil:
+      nimEdApp(gtk3.window(win.toplevel).application).lastActiveView = view
+      var iter: TextIterObj
+      view.buffer.getIterAtLineIndex(iter, 0, 0) # put cursor somewhere, so search entry works from the beginning
+      view.buffer.placeCursor(iter)
+  return view
 
 proc quitActivated(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  quit(gApplication(app))
+  quit(application(app))
+
+proc onmatch(entry: SearchEntry; userData: GPointer; nxt: bool) =
+  var iter, matchStart, matchEnd: TextIterObj
+  let view = lastActiveViewFromWidget(entry)
+  let win = nimEdAppWindow(view.toplevel)
+  let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
+  buffer.getIterAtMark(iter, buffer.insert)
+  if (if nxt: view.searchContext.forward(iter, matchStart, matchEnd) else: view.searchContext.backward(iter, matchEnd, matchStart)):
+    buffer.selectRange(matchEnd, matchStart)
+    view.scrollToMark(buffer.insert, withinMargin = 0.2, useAlign = true, xalign = 1, yalign = 0.5)
+    updateLabelOccurrences(win.searchcountlabel, nil, view.searchContext)
+
+proc onnextmatch(entry: SearchEntry; userData: GPointer) {.exportc, cdecl.} =
+  onmatch(entry, userData, true)
+
+proc onprevmatch(entry: SearchEntry; userData: GPointer) {.exportc, cdecl.} =
+  onmatch(entry, userData, false)
+
+proc searchentryactivate(entry: SearchEntry; userData: GPointer) {.exportc, cdecl.} =
+  let view = lastActiveViewFromWidget(entry)
+  view.grabFocus
+
+proc findNext(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
+  var iter, matchStart, matchEnd: TextIterObj
+  let view: NimView = nimEdApp(app).lastActiveView
+  let win = nimEdAppWindow(view.toplevel)
+  let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
+  buffer.getIterAtMark(iter, buffer.insert)
+  if view.searchContext.forward(iter, matchStart, matchEnd):
+    buffer.selectRange(matchEnd, matchStart)
+    view.scrollToMark(buffer.insert, withinMargin = 0.2, useAlign = true, xalign = 1, yalign = 0.5)
+    updateLabelOccurrences(win.searchcountlabel, nil, view.searchContext)
 
 proc find(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  var startIter, endIter: TextIterObj
+  var iter, startIter, endIter: TextIterObj
   let view: NimView = nimEdApp(app).lastActiveView
   let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
   if not buffer.getSelectionBounds(startIter, endIter):
@@ -702,18 +1091,29 @@ proc find(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.
   if t != nil and t == text: text = nil
   view.searchSettings.setSearchText(text)
 
+proc goto(view: var NimView; line, column: int; mark = false) =
+  var iter: TextIterObj
+  let scrolled: ScrolledWindow = scrolledWindow(view.parent)
+  let notebook: Notebook = notebook(scrolled.parent)
+  let buffer = view.buffer
+  notebook.setCurrentPage(notebook.pageNum(scrolled))
+  buffer.getIterAtLineIndex(iter, line.cint, column.cint)
+  buffer.placeCursor(iter)
+  if view.idleScroll == 0:
+    view.idleScroll = idleAdd(GSourceFunc(scrollToCursor), view)
+  if mark: markLocation(view, line, column)
+
 proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
   var startIter, endIter, iter: TextIterObj
   let windows: GList = application(app).windows
   if windows.isNil: return
   let win: NimEdAppWindow = nimEdAppWindow(windows.data)
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
   let view: NimView = nimEdApp(app).lastActiveView
   let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
   buffer.getStartIter(startIter)
   buffer.getEndIter(endIter)
   let text = buffer.text(startIter, endIter, includeHiddenChars = true)
-  let filepath: string = $view.name
+  let filepath: string = $view.buffer.path
   let dirtypath = saveDirty(filepath, text)
   if dirtyPath.isNil: return
   var line = newStringOfCap(240)
@@ -722,6 +1122,7 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
   buffer.getIterAtMark(iter, buffer.insert)
   let ln = iter.line + 1
   let column = iter.lineIndex + 1
+  #echo ln, column
   socket.send("def " & filepath & ";" & dirtypath & ":" & $ln & ":" & $column & "\c\L")
   var com, sk, sym, sig, path, lin, col, doc, percent: string
   while true:
@@ -729,20 +1130,20 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
     if line.len == 0: break
     if line == "\c\l": continue
     (com, sk, sym, sig, path, lin, col, doc, percent) = line.split('\t')
+    #echo line, " ", strutils.parseInt(lin).cint - 1, ' ', strutils.parseInt(col).cint - 1
   socket.close
   dirtypath.removeFile
-  let grid: Grid = priv.grid
-  let notebook: Notebook = notebook(grid.childAt(0, 1))
   let file: GFile = newFileForPath(path)
-  nimEdAppWindowOpen(win, notebook, file, strutils.parseInt(lin).cint, strutils.parseInt(col).cint)
-
+  var newView = nimEdAppWindowDefOpen(win, file)
+  newView.buffer.defView = true
+  goto(newView, strutils.parseInt(lin) - 1, strutils.parseInt(col))
+  
 proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
   var ln, cn: int
   var startIter, endIter, iter: TextIterObj
   let windows: GList = application(app).windows
   if windows.isNil: return
   let win: NimEdAppWindow = nimEdAppWindow(windows.data)
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
   var view: NimView = nimEdApp(app).lastActiveView
   view.freeErrors
   let buffer: gtksource.Buffer = gtksource.buffer(view.getBuffer)
@@ -753,7 +1154,7 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
     buffer.removeTagByName($i, startIter, endIter)
   buffer.removeSourceMarks(startIter, endIter, NullStr)
   let text = buffer.text(startIter, endIter, includeHiddenChars = true)
-  let filepath: string = $view.name
+  let filepath: string = $view.buffer.path
   let filename = filepath.splitFile[1]
   let dirtypath = saveDirty(filepath, text)
   var line = newStringOfCap(240)
@@ -769,7 +1170,7 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
   var errors = false
   var last: string
   while true:
-    var isError, ignore: bool
+    var isError, firstError, ignore: bool
     last = line
     socket.readLine(line)
     if line.len == 0: break
@@ -778,7 +1179,9 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
     var errorPos = find(line, "Error", 12)
     if errorPos >= 0:
       ignore = not line.startsWith(filename)
-      if not ignore: errors = true
+      if not ignore:
+        firstError = not errors
+        errors = true
       isError = true
     else:
       isError = false
@@ -791,8 +1194,10 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
       i = i + j + 2
       j = parseInt(line, cn, i)
       ln -= 1
-      cn -= 1
+      #cn -= 1
       if cn < 0: cn = 0 # may that really happen? and why
+      if firstError:
+        goto(view, ln, cn, true)
       line = substr(line, errorPos)
       let id = view.addError(line, ln, cn)
       if id > 0:
@@ -828,17 +1233,17 @@ var appEntries = [
   gio.GActionEntryObj(name: "preferences", activate: preferencesActivated, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "quit", activate: quitActivated, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "gotoDef", activate: gotoDef, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "findNext", activate: findNext, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "find", activate: find, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "comp", activate: check, parameterType: nil, state: nil, changeState: nil)]
 
 proc onFilechooserbutton1FileSet(widget: FileChooserButton, userData: GPointer) {.exportc, cdecl.} =
   var
     win: NimEdAppWindow = nimEdAppWindow(userData)
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
-  let grid: Grid = priv.grid
+  let grid: Grid = win.grid
   let notebook: Notebook = notebook(grid.childAt(0, 1))
   let file: GFile = newFileForPath(filechooser(widget).filename)
-  nimEdAppWindowOpen(win, notebook, file)
+  nimEdAppWindowSmartOpen(win, file)
 
 const
   str0 = ".tooltip {background-color: rgba($1, $2, $3, 0.9); color: rgba($4, $5, $6, 1.0); \n}"
@@ -864,9 +1269,10 @@ proc nimEdAppStartup(app: gio.GApplication) {.cdecl.} =
     builder: Builder
     appMenu: gio.GMenuModel
     quitAccels = [cstring "<Ctrl>Q", nil]
-    gotoDefAccels = [cstring "<Ctrl>D", nil]
+    gotoDefAccels = [cstring "<Ctrl>W", nil]
     findAccels = [cstring "<Ctrl>F", nil]
     compAccels = [cstring "<Ctrl>E", nil]
+    findNextAccels = [cstring "<Ctrl>G", nil]
     my_user_data: int64  = 0xDEADBEE1
   # register the GObject types so builder can use them, see
   # https://mail.gnome.org/archives/gtk-list/2015-March/msg00016.html
@@ -877,6 +1283,7 @@ proc nimEdAppStartup(app: gio.GApplication) {.cdecl.} =
   addActionEntries(gio.gActionMap(app), addr appEntries[0], cint(len(appEntries)), app)
   setAccelsForAction(application(app), "app.quit", cast[cstringArray](addr quitAccels))
   setAccelsForAction(application(app), "app.gotoDef", cast[cstringArray](addr gotoDefAccels))
+  setAccelsForAction(application(app), "app.findNext", cast[cstringArray](addr findNextAccels))
   setAccelsForAction(application(app), "app.find", cast[cstringArray](addr findAccels))
   setAccelsForAction(application(app), "app.comp", cast[cstringArray](addr compAccels))
   builder = newBuilder(resourcePath = "/org/gtk/ned/app-menu.ui")
@@ -886,23 +1293,23 @@ proc nimEdAppStartup(app: gio.GApplication) {.cdecl.} =
   objectUnref(builder)
 
 proc nimEdAppActivateOrOpen(win: NimEdAppWindow) =
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
   let notebook: Notebook = newNotebook()
+  bindWithMapping(win.settings, "showtabs", notebook, "show-tabs", gio.GSettingsBindFlags.GET, getMappingTabs, nil, notebook, nil)
+  discard gSignalConnect (notebook, "page-added", gCallback(pageNumChanged), win)
+  discard gSignalConnect (notebook, "page-removed", gCallback(pageNumChanged), win)
   show(notebook)
-  attach(priv.grid, notebook, 0, 1, 1, 1)
-  let scheme: cstring  = getString(priv.settings, StyleSchemeSettingsID)
-  if scheme != nil:
-    let manager = styleSchemeManagerGetDefault()
-    let style = getScheme(manager, scheme)
-    if style != nil:
-      let st: gtksource.Style = gtksource.getStyle(style, "text")
-      if st != nil:
-        var fg, bg: cstring
-        objectGet(st, "foreground", addr fg, nil)
-        objectGet(st, "background", addr bg, nil)
-        setTTColor(fg, bg)
-        free(fg)
-        free(bg)
+  attach(win.grid, notebook, 0, 1, 1, 1)
+  let scheme: cstring  = getString(win.settings, StyleSchemeSettingsID)
+  let manager = styleSchemeManagerGetDefault()
+  let style = getScheme(manager, scheme)
+  let st: gtksource.Style = gtksource.getStyle(style, "text")
+  if st != nil:
+    var fg, bg: cstring
+    objectGet(st, "foreground", addr fg, nil)
+    objectGet(st, "background", addr bg, nil)
+    setTTColor(fg, bg)
+    free(fg)
+    free(bg)
   win.setDefaultSize(600, 400)
   present(win)
 
@@ -920,8 +1327,7 @@ proc nimEdAppOpen(app: gio.GApplication; files: gio.GFileArray; nFiles: cint; hi
     nimEdAppActivateOrOpen(win)
   else:
     win = nimEdAppWindow(windows.data)
-  let priv: NimEdAppWindowPrivate = nimEdAppWindowGetInstancePrivate(win)
-  let notebook: Notebook = gtk3.notebook(priv.grid.childAt(0, 1))
+  let notebook: Notebook = gtk3.notebook(win.grid.childAt(0, 1))
   let nimBinPath = findExe("nim")
   doAssert(nimBinPath != nil, "we need nim executable!")
   let nimsuggestBinPath = findExe("nimsuggest")
@@ -931,7 +1337,7 @@ proc nimEdAppOpen(app: gio.GApplication; files: gio.GFileArray; nFiles: cint; hi
                      ["--v2", "--port:" & $NSPort, $files[0].path],
                      options = {poStdErrToStdOut, poUseShell})
   for i in 0 ..< nFiles:
-    nimEdAppWindowOpen(win, notebook, files[i])
+    nimEdAppWindowSmartOpen(win, files[i])
 
 proc nimEdAppClassInit(klass: NimEdAppClass) =
   klass.startup = nimEdAppStartup
