@@ -769,7 +769,14 @@ proc addViewToNotebook(win: NimEdAppWindow; notebook: Notebook; file: gio.GFile 
     win.buffers = glib.prepend(win.buffers, buffer)
     win.views = glib.prepend(win.views, view)
     discard buffer.createTag(ErrorTagName, "underline", pango.Underline.Error, nil)
-    discard buffer.createTag(HighlightTagName, "background", win.searchMatchBg, "foreground", win.searchMatchFg, nil)
+    if win.searchMatchBg != nil and win.searchMatchFg != nil:
+      discard buffer.createTag(HighlightTagName, "background", win.searchMatchBg, "foreground", win.searchMatchFg, nil)
+    elif win.searchMatchBg != nil:
+      discard buffer.createTag(HighlightTagName, "background", win.searchMatchBg, nil)
+    elif win.searchMatchFg != nil:
+      discard buffer.createTag(HighlightTagName, "foreground", win.searchMatchFg, nil)
+    else:
+      discard buffer.createTag(HighlightTagName, "background", "#cc0", "foreground", "#000", nil)
     for i in 0 .. MaxErrorTags:
       discard buffer.createTag($i, nil)
     if not file.isNil:
@@ -1712,7 +1719,7 @@ proc nimEdAppActivateOrOpen(win: NimEdAppWindow) =
   st = gtksource.getStyle(style, "search-match")
   if st != nil:
     var fg, bg: cstring
-    objectGet(st, "foreground", addr fg, nil)
+    objectGet(st, "foreground", addr fg, nil) # can be nil if no color scheme is set!
     objectGet(st, "background", addr bg, nil)
     win.searchMatchBg = $bg
     win.searchMatchFg = $fg
