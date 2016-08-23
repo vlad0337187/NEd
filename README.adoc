@@ -42,7 +42,7 @@ will never have more than a few thousand lines:-)
 The largest benefits of this tool is the full nimsuggset integration and easy
 customization by hacking the source code.
 
-https://www.gtk.org/[GTK] is not very popular currently -- mailing lists and IRC have very low
+http://www.gtk.org/[GTK] is not very popular currently -- mailing lists and IRC have very low
 activity, which makes it really hard to find community support for coding
 problems. Some reasons for this may be that GTK is not really cross platform
 with native look and feel, and that it's object oriented design coded in plain
@@ -125,7 +125,7 @@ ln -s ~/ngtk3/nim-gdk_pixbuf/src/gdk_pixbuf.nim
 bash ./make_it
 ----
 
-Optionally you may use Nim's package manager nimble to locally install the
+Optionally you may use Nim's package manager _nimble_ to locally install the
 library modules, then you do not have to create the links to module source
 directories inside your NEd project directory. To do that you have to cd into
 each module directory and execute `nimble install` there. But that may lead to
@@ -172,7 +172,8 @@ Or you may try the syntax-highlighting file from https://github.com/nim-lang/Apo
 
 === Using the Editor
 
-The title bar of the _Gnome Desktop_ should display a _NEd_ menu, which allows
+The title bar of the _Gnome Desktop_ should display a _NEd_ menu with a _Preferences_ item,
+which allows
 you to select fonts and color schemes, and other configuration options.
 Proportional fonts are supported, but some have tiny spaces unfortunately. You
 may try the _Input_ font series, which are free of charge for personal use. The
@@ -190,7 +191,11 @@ switches the visible text files.] which contains the last active view -- the
 one which had focus (input cursor ) recently. If the active view has title
 _Unsaved_ and contains no text, that one is used for the new file. (Remember,
 it has to be active, so you may have to click into that text area before to
-indicate that you really want to fill that one.)
+indicate that you really want to fill that one.) If you try to open an
+already opened file again, you will get a new view of that file using the
+already existing test buffer. Generally you use a different notebook for that
+so that both views are visible at the same time and you can edit the buffer
+at different locations.
 
 For vertical scrolling you can use the mouse wheel, the slider at the right
 side of the text, or keyboards keys. Pressing the right mouse button opens a
@@ -206,14 +211,14 @@ highlighted immediately in the text area. If you enter a number prefixed with
 press `Ctrl /` to activate the search entry -- pressing `Return` key brings you
 back into text area
 
-Ctrl+G and Ctrl+Shift+G scrolls to next or previous occurrence. Or you can use
-Ctrl+F in the text area to find the word under the cursor or the selected text.
-Pressing Ctrl+F again turns of highlight.
+`Ctrl+G` and `Ctrl+Shift+G` scrolls to next or previous occurrence. Or you can use
+`Ctrl+F` in the text area to find the word under the cursor or the selected text.
+Pressing `Ctrl+F` again turns of highlight.
 
 === Keyboard Shortcuts
 
 Many useful _keyboard shortcuts_ are already defined by GTK itself. These are
-listed in the table below.I tried not to modify these predefined ones,
+listed in the table below. I tried not to modify these predefined ones,
 because you may be already familiar with it. The Nim specific shortcuts
 are explained in detail below this table.
 

@@ -9,5 +9,5 @@ mkdir nimcache
 #gcc -O2 -c `pkg-config --libs --cflags gtk+-3.0 gmodule-export-2.0` resources.c
 gcc -O2 -c `pkg-config --libs --cflags gtk+-3.0` resources.c
 #nim c -d:release --passL:-lgio-2.0 --passL:-lgmodule-2.0 --passL:-rdynamic --passC:-lgmodule-2.0 --passC:-Wl,--export-dynamic ned.nim
-nim c --passL:-lgio-2.0 --passL:-rdynamic ned.nim
+nim c --threads:on --passL:-lgio-2.0 --passL:-rdynamic ned.nim
 
