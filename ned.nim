@@ -1349,6 +1349,7 @@ proc con(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.c
     let text = buffer.text(startIter, endIter, includeHiddenChars = true)
     let filepath: string = $view.buffer.path
     let dirtypath = saveDirty(filepath, text)
+    free(text)
     if dirtyPath.isNil: return
     var line = newStringOfCap(240)
     let socket = newSocket()
@@ -1391,6 +1392,7 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
   let text = buffer.text(startIter, endIter, includeHiddenChars = true)
   let filepath: string = $view.buffer.path
   let dirtypath = saveDirty(filepath, text)
+  free(text)
   if dirtyPath.isNil: return
   var line = newStringOfCap(240)
   let socket = newSocket()
@@ -1537,6 +1539,7 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
   let filepath: string = $view.buffer.path
   let filename = filepath.splitFile[1]
   let dirtypath = saveDirty(filepath, text)
+  free(text)
   var line = newStringOfCap(240)
   var attrs = newMarkAttributes()
   var color = RGBAObj(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.2)
