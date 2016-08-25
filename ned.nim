@@ -1,5 +1,5 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support 
-# S. Salewski, 2016-AUG-23
+# S. Salewski, 2016-AUG-25
 # v 0.3
 #
 # Note: for resetting gsettings database:
@@ -690,12 +690,12 @@ proc log(win: NimEdAppWindow; msg: cstring; level = LogLevel.log) =
 proc onDestroyNimView(obj: Widget; userData: GPointer) {.cdecl.} =
   let win = nimEdAppWindow(userData)
   let app = nimEdApp(win.getApplication)
-  if not app.isNil: # yes this happens for last view!
-    if app.lastActiveView == obj:
-      app.lastActiveView = if win.views.isNil: nil else: nimView(win.views.data)
   var v = nimView(obj)
   var b = v.buffer
   win.views = win.views.remove(v)
+  if not app.isNil: # yes this happens for last view!
+    if app.lastActiveView == obj:
+      app.lastActiveView = if win.views.isNil: nil else: nimView(win.views.data)
   if findViewWithBuffer(win.views, b).isNil:
     win.buffers = win.buffers.remove(b)
 
