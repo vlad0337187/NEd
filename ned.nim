@@ -523,8 +523,8 @@ proc closetabAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gp
   let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
   let scrolled: ScrolledWindow = scrolledWindow(view.parent)
   let notebook: Notebook = notebook(scrolled.parent)
-  let parent = container(notebook.parent)
-  if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
+  #let parent = container(notebook.parent)
+  #if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
   notebook.remove(scrolled)
 
 proc showErrorTooltip(w: Widget; x, y: cint; keyboardMode: GBoolean; tooltip: Tooltip; data: GPointer): GBoolean {.cdecl.} =
@@ -563,8 +563,8 @@ proc closeTab(button: Button; userData: GPointer) {.cdecl.} =
   let win = nimEdAppWindow(button.toplevel)
   let notebook: Notebook = notebook(button.parent.parent)
   let scrolled: ScrolledWindow = scrolledWindow(userData)
-  let parent = container(notebook.parent)
-  if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
+  #let parent = container(notebook.parent)
+  #if notebook.nPages == 1 and not isPaned(parent): quit(win.getApplication); return
   notebook.remove(scrolled)
 
 proc onBufferModified(textBuffer: TextBuffer; userData: GPointer) {.cdecl.} =
@@ -839,7 +839,18 @@ proc pageNumChanged(notebook: Notebook; child: Widget; pageNum: cuint; userData:
   notebook.showTabs = notebook.getNPages > 1 or getBoolean(win.settings, "showtabs")
   if notebook.nPages == 0:
     let parent = container(notebook.parent)
-    if not isPaned(parent): return
+    #if not isPaned(parent): return
+
+    echo "pageNumChanged"
+
+
+    if not isPaned(parent):
+      let h = win.getApplication
+      if h != nil:
+        quit(h)
+      return
+
+
     var c1 = paned(parent).child1
     var c2 = paned(parent).child2
     if notebook == c1: swap(c1, c2)
@@ -1410,7 +1421,8 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
       echo "line.isNil"
       break
     if line.len == 0: break
-    if line == "\c\l": continue
+    #if line == "\c\l": continue
+    if line.find('\t') < 0: continue
     echo line
     log(win, line)
     (com, sk, sym, sig, path, lin, col, doc, percent) = line.split('\t')
