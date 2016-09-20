@@ -3,7 +3,7 @@
 <!--
   https://developer.gnome.org/gtksourceview/unstable/lang-reference.html
   language definition file for Nim and GtkSourceView
-  S. Salewski 10-JUN-2016
+  S. Salewski 20-SEP-2016
   License: GPL
 
   works best when indent step is 2 spaces, I got it not really working fine for arbitrary steps
@@ -285,6 +285,7 @@
       </include>
     </context>
 
+		<!--
     <context id="indent-pat0">
       <match>^\s{15}\s*</match>
     </context>
@@ -298,11 +299,11 @@
     </context>
 
     <context id="indent-pat4" style-ref="indent">
-      <!-- this seems not to work, why?
+      this seems not to work, why?
       <match>(?&lt;=(^\w{ind}))(\w{ind})</match>
-      -->
       <match>(?&lt;=(^  ))(  )</match>
-    </context>
+		</context>
+		-->
 
     <context id="addrcast" style-ref="error" >
       <keyword>addr</keyword>
@@ -424,11 +425,13 @@
         <context ref="types"/>
         <context ref="operators"/>
         <context ref="single-quoted-char"/>
-        <context ref="brackets"/>
+				<context ref="brackets"/>
+				<!--
         <context ref="indent-pat0"/>
         <context ref="indent-pat12"/>
         <context ref="indent-pat8"/>
-        <context ref="indent-pat4"/>
+				<context ref="indent-pat4"/>
+				-->
       </include>
     </context>
 

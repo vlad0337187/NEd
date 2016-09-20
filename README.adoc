@@ -2,7 +2,7 @@
 :experimental:
 :imagesdir: http://ssalewski.de/tmp
 (c) Stefan Salewski +
-Version 0.3, 22-AUG-2016
+Version 0.4, 20-SEP-2016
 
 NEd is a simple GTK3 text editor with special support for the Nim programming
 language. It supports syntax highlighting and permanent extended symbol info
@@ -118,6 +118,7 @@ ln -s ~/ngtk3/nim-gtk3/src/gtk3.nim
 ln -s ~/ngtk3/nim-gtksourceview/src/gtksource.nim
 ln -s ~/ngtk3/nim-gobject/src/gobject.nim
 ln -s ~/ngtk3/nim-cairo/src/cairo.nim
+ln -s ~/ngtk3/nim-cairo/src/cairo_pragma.nim
 ln -s ~/ngtk3/nim-pango/src/pango.nim
 ln -s ~/ngtk3/nim-pango/src/pango_cairo.nim
 ln -s ~/ngtk3/nim-gdk_pixbuf/src/gdk_pixbuf.nim
@@ -169,6 +170,24 @@ Or you may try the syntax-highlighting file from https://github.com/nim-lang/Apo
 ----
 ./ned file1.nim file2.nim
 ----
+
+Unfortunately you can launch it for testing only this way, from inside its directory.
+When that test is sucessfull, and you intend to really use it, then installing the
+gsettings configuration is necessary. One method would be this:
+
+----
+# And for making gsettings available system wide one method is, as root
+# https://developer.gnome.org/gio/stable/glib-compile-schemas.html
+# echo $XDG_DATA_DIRS
+# /usr/share/gnome:/usr/local/share:/usr/share:/usr/share/gdm
+# cd /usr/local/share/glib-2.0/schemas
+# cp org.gtk.ned.gschema.xml .
+# glib-compile-schemas .
+#
+----
+
+Unfortunately that can be done only with administrator rights, and I don't know
+how it could be done on Windows or Mac. 
 
 === Using the Editor
 

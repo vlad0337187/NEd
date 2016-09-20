@@ -70,6 +70,41 @@
       <default>true</default>
       <summary>Show words</summary>
       <description>Whether to show a word list in the sidebar</description>
+		</key>
+    <key name="smartbackspace" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+		</key>
+    <key name="spacetabs" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+		</key>
+    <key name="linespace" type="i">
+      <default>0</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="tabwidth" type="i">
+      <default>2</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="indentwidth" type="i">
+      <default>2</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="rightmargin" type="i">
+      <default>80</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
+    </key>
+    <key name="showrightmargin" type="b">
+      <default>true</default>
+      <summary>Show words</summary>
+      <description>Whether to show a word list in the sidebar</description>
     </key>
   </schema>
 </schemalist>
