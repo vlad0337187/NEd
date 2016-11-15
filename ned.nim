@@ -1,5 +1,5 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support
-# S. Salewski, 2016-SEP-20
+# S. Salewski, 2016-NOV-14
 # v 0.4
 #
 # Note: for resetting gsettings database:
@@ -1643,20 +1643,27 @@ var appEntries = [
   gio.GActionEntryObj(name: "check", activate: check, parameterType: nil, state: nil, changeState: nil)]
 
 const
-  str0 = ".tooltip {background-color: rgba($1, $2, $3, 0.9); color: rgba($4, $5, $6, 1.0); \n}"
-
+  str000 = """tooltip.background {
+    border: none
+  }
+  """
+  #str0 = "tooltip label {text-shadow: none; background-color: transparent; color: rgba($4, $5, $6, 1.0); \n}"
+  str0 = "tooltip label {text-shadow: none; background-color: rgba($1, $2, $3, 1); color: rgba($4, $5, $6, 1.0); \n}"
+  str00 = "tooltip {text-shadow: none; background-color: rgba($1, $2, $3, 0.5); color: rgba($4, $5, $6, 1.0); \n}"
 proc setTTColor(fg, bg: cstring) =
   var rgba_bg: gdk3.RGBAObj
   var rgba_fg: gdk3.RGBAObj
   if not rgbaParse(rgba_fg, bg): return
   if not rgbaParse(rgba_bg, fg): return
-  let str: string = str0 % map([rgba_bg.red, rgba_bg.green, rgba_bg.blue, rgba_fg.red, rgba_fg.green, rgba_fg.blue], proc(x: cdouble): string = $system.int(x*255))
+  let str: string = str000 & str0 % map([rgba_bg.red, rgba_bg.green, rgba_bg.blue, rgba_fg.red, rgba_fg.green, rgba_fg.blue], proc(x: cdouble): string = $system.int(x*255)) &
+    str00 % map([rgba_bg.red, rgba_bg.green, rgba_bg.blue, rgba_fg.red, rgba_fg.green, rgba_fg.blue], proc(x: cdouble): string = $system.int(x*255))
   var gerror: GError
   let provider: CssProvider = newCssProvider()
-  let display: Display = displayGetDefault()
-  let screen: gdk3.Screen = getDefaultScreen(display)
-  styleContextAddProviderForScreen(screen, styleProvider(provider), STYLE_PROVIDER_PRIORITY_APPLICATION.cuint)
+  styleContextAddProviderForScreen(gdk3.screenGetDefault(), styleProvider(provider), STYLE_PROVIDER_PRIORITY_APPLICATION.cuint)
   discard loadFromData(provider, str, GSize(-1), gerror)
+  if gerror != nil:
+    echo gerror.message
+    free(gerror)
   objectUnref(provider)
 
 proc nimEdAppStartup(app: gio.GApplication) {.cdecl.} =
@@ -1800,3 +1807,5 @@ addHandler(L)
 initapp()
 
 # 1818 lines
+# CTRL n/N first/last Line
+# SHIFT cursor Mark
