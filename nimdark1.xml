@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <!-- dark color scheme for Nim
-     S. Salewski, 07-JUN-2016
+     S. Salewski, 29-NOV-2016
 -->
 
 <style-scheme id="nimdark1" _name="Nim dark 1" version="1.0">
@@ -39,7 +39,7 @@
   <style name="current-line-number"             foreground="fground" bold="true"/>
 
   <!-- Bracket Matching -->
-  <style name="bracket-match"                   foreground="purple" bold="true"/>
+  <style name="bracket-match"                   foreground="purple" bold="false"/>
   <style name="bracket-mismatch"                background="green" foreground="red"/>
 
   <!-- Right Margin -->

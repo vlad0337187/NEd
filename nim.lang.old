@@ -3,7 +3,7 @@
 <!--
   https://developer.gnome.org/gtksourceview/unstable/lang-reference.html
   language definition file for Nim and GtkSourceView
-  S. Salewski 29-NOV-2016
+  S. Salewski 20-SEP-2016
   License: GPL
 
   works best when indent step is 2 spaces, I got it not really working fine for arbitrary steps
@@ -197,10 +197,6 @@
       <match>{\..*\.}</match>
     </context>
 
-    <context id="newtype" style-ref="pascal">
-      <match>\%{nidu}</match>
-    </context>
-
     <context id="error" style-ref="error">
       <match>(\t|__+|\b_|_\b)</match>
     </context>
@@ -212,8 +208,7 @@
 
     <context id="types" style-ref="type">
       <keyword>u?int(8|16|32|64)?</keyword>
-      <keyword>cu?int</keyword>
-      <keyword>cu?long</keyword>
+      <keyword>cint</keyword>
       <keyword>float(32|64)?</keyword>
       <keyword>bool</keyword>
       <keyword>char</keyword>
@@ -241,13 +236,12 @@
       <end>^(?!((\%{1@start}\s\s)|(\s*$)))</end>
       <include>
         <context ref="comment-noext"/>
-        <!--context style-ref="typedecl" extend-parent="false">
+        <context style-ref="typedecl" extend-parent="false">
           <match>^\s*\%{nid}</match>
-        </context-->
-        <!--context ref="used-types"/-->
-        <context ref="newtype"/>
-        <!--context ref="types"/-->
-        <!--context where="start" sub-pattern="2" style-ref="keyword"/-->
+        </context>
+        <context ref="used-types"/>
+        <context ref="types"/>
+        <context where="start" sub-pattern="2" style-ref="keyword"/>
       </include>
     </context>
 
@@ -274,28 +268,13 @@
       </include>
     </context>
 
-    <context id="typecon">
-      <match>(\%{nidl}\.)?(\%{nidu})(?=(\s*\(|\.))</match>
-      <include>
-        <context sub-pattern="1" style-ref="qualifier"/>
-        <context sub-pattern="2" style-ref="pascal"/>
-      </include>
-    </context>
-
     <!-- ptr gtk3.Button -->
-    <context id="used-types" style-ref="plain-text">
-     <match>((:)|(object of|ptr|ref)) (\%{nidl}\.)?(\%{nidu})</match>
+    <context id="used-types" style-ref="keyword">
+      <match>(:|object of|ptr|ref) (\%{nidl}\.)?(\%{nidu})</match>
       <include>
-        <context sub-pattern="2" style-ref="operator"/>
-        <context sub-pattern="3" style-ref="keyword"/>
-        <context sub-pattern="4" style-ref="qualifier"/>
-        <context sub-pattern="5" style-ref="pascal"/>
+        <context sub-pattern="2" style-ref="qualifier"/>
+        <context sub-pattern="3" style-ref="pascal"/>
       </include>
-    </context>
-
-    <!-- enum -->
-    <context id="enum" style-ref="keyword">
-      <match>(enum|tuple|object)</match>
     </context>
 
     <!-- line.`len` looks like system.quit -->
@@ -339,6 +318,7 @@
         <context sub-pattern="4" style-ref="plain-text"/>
       </include>
     </context>
+
 
     <context id="keywords" style-ref="keyword" >
       <!--<keyword>addr</keyword>-->
@@ -414,9 +394,6 @@
       
       <!-- we add these here -->
       <keyword>expr</keyword>
-      <keyword>stmt</keyword>
-      <keyword>typed</keyword>
-      <keyword>untyped</keyword>
     </context>
 
     <!-- larger constructs on top, simple elements below -->
@@ -427,12 +404,11 @@
         <context ref="multiline-comment"/>
         <context ref="multiline-triple-quoted-string"/>
         <context ref="comment"/>
-        <!--context ref="type-decls"/-->
+        <context ref="type-decls"/>
         <context ref="double-quoted-raw-string"/>
         <context ref="double-quoted-string"/>
         <context ref="cast"/>
         <context ref="call"/>
-        <context ref="typecon"/>
         <context ref="used-types"/>
         <context ref="qualified-method-calls"/>
         <context ref="pragma"/>
@@ -450,9 +426,6 @@
         <context ref="operators"/>
         <context ref="single-quoted-char"/>
 				<context ref="brackets"/>
-
-        <!--context ref="type-decls"/-->
-
 				<!--
         <context ref="indent-pat0"/>
         <context ref="indent-pat12"/>

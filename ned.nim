@@ -1,6 +1,6 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support
-# S. Salewski, 2016-NOV-14
-# v 0.4
+# S. Salewski, 2016-NOV-30
+# v 0.4.2
 #
 # Note: for resetting gsettings database:
 # gsettings --schemadir "." reset-recursively "org.gtk.ned"
@@ -13,33 +13,19 @@
 # cp org.gtk.ned.gschema.xml .
 # glib-compile-schemas .
 #
-{.deadCodeElim: on.}
-{.link: "resources.o".}
+# TODO: remove proc int() from gtk3 and gobject module
 
 import gobject, gtk3, gdk3, gio, glib, gtksource, gdk_pixbuf, pango
 import osproc, streams, os, net, strutils, sequtils, parseutils, locks, times #, strscans, logging
 
-# Since the 3.20 version, if @line_number is greater than the number of lines
-# in the @buffer, the end iterator is returned. And if @byte_index is off the
-# end of the line, the iterator at the end of the line is returned.
-proc getIterAtLineIndex320(buffer: gtk3.TextBuffer; iter: var gtk3.TextIterObj; lineNumber: cint; byteIndex: cint) =
-  var endLineIter: TextIterObj
-  if lineNumber >= buffer.lineCount:
-    buffer.getEndIter(iter)
-    return
-  buffer.getIterAtLine(iter, lineNumber)
-  endLineIter = iter
-  if not endLineIter.endsLine:
-    discard endLineIter.forwardToLineEnd
-  if byteIndex <= endLineIter.lineIndex:
-    iter.lineIndex = byteIndex
-  else:
-    iter = endLineIter
+{.deadCodeElim: on.}
+{.link: "resources.o".}
+{.push warning[SmallLshouldNotBeUsed]: off.}
 
 const
-  ProgramName = "NEd"
-  MaxErrorTags = 8
-  NullStr = cast[cstring](nil)
+  # ProgramName = "NEd"
+  MaxErrorTags = 16
+  NullStr = cstring(nil)
   ErrorTagName = "error"
   HighlightTagName = "high"
   NSPort = Port(6000)
@@ -52,8 +38,6 @@ type
     debug, log, warn, error
 
 var nsProcess: Process # nimsuggest
-
-var statusLock: Lock # threads display messages on statusbar
 
 type # for channel communication
   StatusMsg = object
@@ -85,6 +69,7 @@ type
     statusID2: cuint
     messageID: cuint
     timeoutEventSourceID: cuint
+    msgThreadSourceID: cuint
     logLevel: LogLevel
 
   NimEdAppWindowClass = ptr NimEdAppWindowClassObj
@@ -92,13 +77,13 @@ type
 
 gDefineType(NimEdAppWindow, applicationWindowGetType())
 
-template typeNimEdAppWindow(): expr = nimEdAppWindowGetType()
+template typeNimEdAppWindow(): untyped = nimEdAppWindowGetType()
 
 proc nimEdAppWindow(obj: GPointer): NimEdAppWindow =
   gTypeCheckInstanceCast(obj, typeNimEdAppWindow, NimEdAppWindowObj)
 
-proc isNimEdAppWindow(obj: GPointer): GBoolean =
-  gTypeCheckInstanceType(obj, typeNimEdAppWindow)
+# proc isNimEdAppWindow(obj: GPointer): GBoolean =
+#   gTypeCheckInstanceType(obj, typeNimEdAppWindow)
 
 var thread: Thread[NimEdAppWindow]
 var channel: system.Channel[StatusMsg]
@@ -122,13 +107,13 @@ type
 
 gDefineType(NimView, viewGetType())
 
-template typeNimView(): expr = nimViewGetType()
+# template typeNimView(): untyped = nimViewGetType()
 
 proc nimView(obj: GPointer): NimView =
   gTypeCheckInstanceCast(obj, nimViewGetType(), NimViewObj)
 
-proc isNimView(obj: GPointer): GBoolean =
-  gTypeCheckInstanceType(obj, typeNimView)
+# proc isNimView(obj: GPointer): GBoolean =
+#   gTypeCheckInstanceType(obj, typeNimView)
 
 proc nimViewDispose(obj: GObject) {.cdecl.} =
   let view = nimView(obj)
@@ -142,13 +127,12 @@ proc freeNVE(data: Gpointer) {.cdecl.} =
   discard glib.free(e.gs, freeSegment = true)
   glib.free(data)
 
-proc freeErrors(v: var NimView) {.cdecl.} =
+proc freeErrors(v: NimView) {.cdecl.} =
   glib.freeFull(v.errors, freeNVE)
   v.errors = nil
 
 proc nimViewFinalize(gobject: GObject) {.cdecl.} =
-  var self = nimView(gobject)
-  self.freeErrors
+  nimView(gobject).freeErrors
   gObjectClass(nimViewParentClass).finalize(gobject)
 
 proc nimViewClassInit(klass: NimViewClass) =
@@ -182,6 +166,12 @@ proc addError(v: NimView, s: cstring; line, col: int): int =
   v.errors = glib.prepend(v.errors, el)
   return i
 
+proc appendError(v: NimView, s: cstring) =
+  let p: GList = v.errors
+  if p != nil:
+    let el = cast[ptr NimViewError](p.data)
+    el.gs.appendPrintf("\n%s", s)
+
 type
   NimViewBuffer = ptr NimViewBufferObj
   NimViewBufferObj = object of gtksource.BufferObj
@@ -194,13 +184,13 @@ type
 
 gDefineType(NimViewBuffer, gtksource.bufferGetType())
 
-template typeNimViewBuffer(): expr = nimViewBufferGetType()
+# template typeNimViewBuffer(): untyped = nimViewBufferGetType()
 
 proc nimViewBuffer(obj: GPointer): NimViewBuffer =
   gTypeCheckInstanceCast(obj, nimViewBufferGetType(), NimViewBufferObj)
 
-proc isNimViewBuffer(obj: GPointer): GBoolean =
-  gTypeCheckInstanceType(obj, typeNimViewBuffer)
+# proc isNimViewBuffer(obj: GPointer): GBoolean =
+#   gTypeCheckInstanceType(obj, typeNimViewBuffer)
 
 proc nimViewBufferDispose(obj: GObject) {.cdecl.} =
   gObjectClass(nimViewBufferParentClass).dispose(obj)
@@ -226,18 +216,34 @@ proc newNimViewBuffer(language: gtksource.Language): NimViewBuffer =
 proc buffer(view: NimView): NimViewBuffer =
   nimViewBuffer(view.getBuffer)
 
+proc showmsg1(win: NimEdAppWindow; t: cstring) =
+  win.statusbar.removeAll(win.statusID2)
+  if t != nil:
+    discard win.statusbar.push(win.statusID2, t)
+
 # this hack is from gedit 3.20
 proc scrollToCursor(v: GPointer): GBoolean {.cdecl.} =
   let v = nimView(v)
-  let buffer = v.buffer
-  v.scrollToMark(buffer.insert, withinMargin = 0.25, useAlign = false, xalign = 0, yalign = 0)
+  #let buffer = v.buffer
+  v.scrollToMark(v.buffer.insert, withinMargin = 0.25, useAlign = false, xalign = 0, yalign = 0)
   v.idleScroll = 0
+  return G_SOURCE_REMOVE
+
+type
+  ThreadMsg = object
+    win: NimEdAppWindow
+    msg: cstring
+
+proc showMsgFromThread(tm: GPointer): GBoolean {.cdecl.} =
+  let tm = cast[ptr ThreadMsg](tm)
+  showmsg1(tm.win, tm.msg)
+  tm.win.msgThreadSourceID = 0
   return G_SOURCE_REMOVE
 
 type
   Provider = ptr ProviderObj
   ProviderObj = object of CompletionProviderObj
-    proposals: GList
+    proposals, filteredProposals: GList
     priority: cint
     win: NimEdAppWindow
     name: cstring
@@ -265,13 +271,13 @@ addInterfaceStatic(gDefineTypeId, $1, addr(gImplementInterfaceInfo))
 gDefineTypeExtended(Provider, objectGetType(), 0,
   gImplementInterfaceStr("completionProviderGetType()", "providerIfaceInit"))
 
-template typeProvider(): expr = providerGetType()
+#template typeProvider(): untyped = providerGetType()
 
 proc provider(obj: GObject): Provider =
   gTypeCheckInstanceCast(obj, providerGetType(), ProviderObj)
 
-proc isProvider(obj: expr): bool =
-  gTypeCheckInstanceType(obj, typeProvider)
+# proc isProvider(obj: untyped): bool =
+#   gTypeCheckInstanceType(obj, typeProvider)
 
 proc providerGetName(provider: CompletionProvider): cstring {.cdecl.} =
   dup(provider(provider).name) # we really need the provider() cast here and below...
@@ -290,10 +296,9 @@ proc providerGetIcon(provider: CompletionProvider): GdkPixbuf =
 ## returns dirtypath or nil for failure
 proc saveDirty(filepath: string; text: cstring): string =
   var gerror: GError
-  var gfile: GFile
   var stream: GFileIOStream
   let filename = filepath.splitFile[1] & "XXXXXX.nim"
-  gfile = newFile(filename, stream, gerror)
+  let gfile = newFile(filename, stream, gerror)
   if gfile.isNil:
     #error(gerror.message)
     #error("Can't create nimsuggest dirty file")
@@ -319,18 +324,18 @@ gDefineType(NimEdApp, gtk3.applicationGetType())
 
 proc nimEdAppInit(self: NimEdApp) = discard
 
-template typeNimEdApp(): expr = nimEdAppGetType()
+template typeNimEdApp(): untyped = nimEdAppGetType()
 
 proc nimEdApp(obj: GPointer): NimEdApp =
   gTypeCheckInstanceCast(obj, nimEdAppGetType(), NimEdAppObj)
 
-proc isNimEdApp(obj: GPointer): GBoolean =
-  gTypeCheckInstanceType(obj, typeNimEdApp)
+# proc isNimEdApp(obj: GPointer): GBoolean =
+#   gTypeCheckInstanceType(obj, typeNimEdApp)
 
 proc lastActiveViewFromWidget(w: Widget): NimView =
   nimEdApp(gtk3.window(w.toplevel).application).lastActiveView
 
-proc goto(view: var NimView; line, column: int)
+proc goto(view: NimView; line, column: int)
 
 proc onSearchentrySearchChanged(entry: SearchEntry; userData: GPointer) {.exportc, cdecl.} =
   let win = nimEdAppWindow(entry.toplevel)
@@ -357,17 +362,9 @@ proc onSearchentrySearchChanged(entry: SearchEntry; userData: GPointer) {.export
 
 proc removeMessageTimeout(p: GPointer): GBoolean {.cdecl.} =
   let win = nimEdAppWindow(p)
-  acquire(statusLock)
   win.statusbar.remove(win.statusID1, win.messageID)
-  release(statusLock)
   win.timeoutEventSourceID = 0
   return G_SOURCE_REMOVE
-
-proc showmsg1(win: NimEdAppWindow; t: cstring) =
-  if tryAcquire(statusLock):
-    win.statusbar.removeAll(win.statusID2)
-    discard win.statusbar.push(win.statusID2, t)
-    release(statusLock)
 
 proc showmsg(win: NimEdAppWindow; t: cstring) =
   if win.timeoutEventSourceID != 0:
@@ -381,19 +378,28 @@ proc showmsg(win: NimEdAppWindow; t: cstring) =
 # current problem is, that we may get a lot of templates, see
 # http://forum.nim-lang.org/t/2258#13769
 # so we allow a few, but supress templates when too many...
+# as docs tell us, we have to always call addProposals() with finished = true
 proc getMethods(completionProvider: CompletionProvider; context: CompletionContext) {.cdecl.} =
-  if nsProcess.isNil: return
   var startIter, endIter, iter: TextIterObj
-  var proposals: GList
-  var filteredProposals: GList
+  var proposals, filteredProposals: GList
   var templates = 0
-  if context.getIter(iter) and iter.backwardChar and iter.getChar == utf8GetChar("."):
-    if context.activation == CompletionActivation.USER_REQUESTED:
+  if context.activation == CompletionActivation.NONE:
+    doassert false # should never happen
+  if context.activation == CompletionActivation.INTERACTIVE: # happens when RETURN key is pressed -- how to avoid?
+    addProposals(context, completionProvider, proposals, finished = true) # clean exit
+    # echo "CompletionActivation.INTERACTIVE"
+    return
+  if context.activation == CompletionActivation.USER_REQUESTED:
+    if not (context.getIter(iter) and iter.backwardChar and iter.getChar == utf8GetChar(".")):
+      addProposals(context, completionProvider, proposals, finished = true) # clean exit
+      #echo "fast return"
+      return
+    else:
       let provider = provider(completionProvider)
       let view: NimView = provider.win.lastActiveViewFromWidget
       let buffer= view.buffer
-      if buffer.path.isNil or not buffer.path.hasSuffix(".nim"):
-        # showmsg(win, "File is still unsaved or has no .nim suffix -- action ignored.") # no win available
+      if buffer.path.isNil or not buffer.path.hasSuffix(".nim") or nsProcess.isNil: # when editor is started without a nim file
+        showmsg(provider.win, "File is still unsaved or has no .nim suffix -- action ignored.")
         addProposals(context, completionProvider, proposals, finished = true)
         return
       buffer.getStartIter(startIter)
@@ -409,7 +415,6 @@ proc getMethods(completionProvider: CompletionProvider; context: CompletionConte
         socket.connect("localhost", NSPort)
         socket.send("sug " & filepath & ";" & dirtypath & ":" & $ln & ":" & $col & "\c\L")
         let icon = providerGetIcon(provider)
-        freeFull(provider.proposals, objectUnref)
         var line = newString(240)
         while true:
           socket.readLine(line)
@@ -417,6 +422,7 @@ proc getMethods(completionProvider: CompletionProvider; context: CompletionConte
           if line.find('\t') < 0: continue
           var com, sk, sym, sig, path, lin, col, doc, percent: string
           (com, sk, sym, sig, path, lin, col, doc, percent) = line.split('\t')
+          #echo line#"sig: " & sig
           let unqualifiedSym = substr(sym, sym.find('.') + 1)
           let item: CompletionItem = newCompletionItemWithLabel(sym, unqualifiedSym, icon, sig)
           proposals = prepend(proposals, item)
@@ -424,8 +430,11 @@ proc getMethods(completionProvider: CompletionProvider; context: CompletionConte
             inc(templates)
           else:
             filteredProposals = prepend(filteredProposals, item)
-        provider.proposals = proposals
         socket.close
+        freeFull(provider.proposals, objectUnref)
+        free(provider.filteredProposals)
+        provider.filteredProposals = filteredProposals
+        provider.proposals = proposals
   if templates > 3:
     proposals = filteredProposals
   addProposals(context, completionProvider, proposals, finished = true)
@@ -438,7 +447,9 @@ proc providerIfaceInit(iface: CompletionProviderIface) =
 proc providerDispose(obj: GObject) {.cdecl.} =
   var self = provider(obj)
   freeFull(self.proposals, objectUnref)
+  free(self.filteredProposals)
   self.proposals = nil
+  self.filteredProposals = nil
   var hhh = gobject(self.icon)
   clearObject(hhh)
   self.icon = nil
@@ -466,24 +477,12 @@ proc initCompletion(view: NimView; completion: gtksource.Completion; win: NimEdA
   let nsProvider = provider(newObject(providerGetType(), nil))
   nsProvider.priority = 5
   nsProvider.win = win
-  nsProvider.name = dup("Fixed Provider")
+  nsProvider.name = dup("Nim suggests:")
   discard addProvider(completion, nsProvider, error)
 
 proc nimEdAppWindowSmartOpen(win: NimEdAppWindow; file: gio.GFile): NimView {.discardable.}
 
-proc launchNSProcess(path: string) =
-  if not nsProcess.isNil: return
-  if path != nil and path.hasSuffix(".nim"):
-    let file: GFile = newFileForPath(path)
-    if queryExists(file, nil):
-      let nimBinPath = findExe("nim")
-      doAssert(nimBinPath != nil, "we need nim executable!")
-      let nimsuggestBinPath = findExe("nimsuggest")
-      doAssert(nimsuggestBinPath != nil, "we need nimsuggest executable!")
-      let nimPath = nimBinPath.splitFile.dir.parentDir
-      nsProcess = startProcess(nimsuggestBinPath, nimPath,
-                         ["--v2", "--threads:on", "--port:" & $NSPort, $path],
-                         options = {poStdErrToStdOut, poUseShell})
+proc initSuggest(win: NimEdAppWindow; path: string)
 
 proc open(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
   let dialog = newFileChooserDialog("Open File", nimEdAppWindow(app), FileChooserAction.OPEN,
@@ -491,9 +490,10 @@ proc open(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.
   if dialog.run == ResponseType.ACCEPT.ord:
     let filename = fileChooser(dialog).filename
     if nsProcess.isNil:
-      launchNSProcess($filename)
+      initSuggest(nimEdAppWindow(app), $filename)
     let file: GFile = newFileForPath(filename)
     nimEdAppWindowSmartOpen(nimEdAppWindow(app), file)
+    objectUnref(file)
     free(filename)
   dialog.destroy
 
@@ -511,8 +511,6 @@ proc saveBuffer(buffer: NimViewBuffer) =
   let res = gfile.replaceContents(text, len(text), etag = nil, makeBackup = false, GFileCreateFlags.NONE, newEtag = nil, cancellable = nil, gerror)
   objectUnref(gfile)
   if res:
-    if nsProcess.isNil:
-      launchNSProcess($buffer.path)
     buffer.modified = false
 
 proc saveAsAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
@@ -525,6 +523,8 @@ proc saveAsAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpoi
     view.label.text = glib.basename(view.buffer.path)
     saveBuffer(view.buffer)
     fixUnnamed(view.buffer, view.label.text)
+    if nsProcess.isNil:
+      initSuggest(nimEdAppWindow(app), $view.buffer.path)
   dialog.destroy
 
 proc save(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
@@ -542,7 +542,6 @@ proc markTargetAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: 
   let notebook: Notebook = notebook(scrolled.parent)
   win.target = notebook
 
-
 proc findViewWithBuffer(views: GList; buffer: NimViewBuffer): NimView =
   var p: GList = views
   while p != nil:
@@ -551,7 +550,7 @@ proc findViewWithBuffer(views: GList; buffer: NimViewBuffer): NimView =
     p = p.next
 
 proc closetabAction(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  let win = nimEdAppWindow(app)
+  #let win = nimEdAppWindow(app)
   let view: NimView = nimEdApp(nimEdAppWindow(app).getApplication).lastActiveView
   let scrolled: ScrolledWindow = scrolledWindow(view.parent)
   let notebook: Notebook = notebook(scrolled.parent)
@@ -582,34 +581,36 @@ proc showErrorTooltip(w: Widget; x, y: cint; keyboardMode: GBoolean; tooltip: To
 
 proc onGrabFocus(widget: Widget; userData: GPointer) {.cdecl.} =
   let win = nimEdAppWindow(userData)
-  win.headerbar.subtitle = nimView(widget).buffer.path
-  if win.headerbar.subtitle.isNil:
-    win.headerbar.title = "Unsaved"
-  else:
-    win.headerbar.title = glib.basename(win.headerbar.subtitle) # deprecated, no copy
-  nimEdApp(gtk3.window(widget.toplevel).application).lastActiveView = nimView(widget)
+  let view = nimView(widget)
+  win.headerbar.subtitle = view.buffer.path
+  win.headerbar.title = view.label.text
+  nimEdApp(gtk3.window(widget.toplevel).application).lastActiveView = view
 
 proc closeTab(button: Button; userData: GPointer) {.cdecl.} =
-  let win = nimEdAppWindow(button.toplevel)
+  #let win = nimEdAppWindow(button.toplevel)
   let notebook: Notebook = notebook(button.parent.parent)
   let scrolled: ScrolledWindow = scrolledWindow(userData)
   notebook.remove(scrolled)
 
 proc onBufferModified(textBuffer: TextBuffer; userData: GPointer) {.cdecl.} =
   var s: string
-  let l: Label = label(userdata)
+  let view = nimView(userdata)
+  let win = nimEdAppWindow(view.toplevel)
+  let l: Label = view.label
   let h = nimViewBuffer(textBuffer).path
-  if h.isNil:
-    s = "Unsaved"
-  else:
-    s = ($h).extractFilename
+  s = if h.isNil: "Unsaved" else: ($h).extractFilename
+  #if h.isNil:
+  #  s = "Unsaved"
+  #else:
+  #  s = ($h).extractFilename
   if textBuffer.modified:
     s.insert("*")
   l.text = s
+  win.headerbar.title = s
 
 proc advanceErrorWord(ch: GUnichar, userdata: Gpointer): GBoolean {.cdecl.} = gNot(isalnum(ch))
 
-proc removeMarks(view: var NimView) =
+proc removeMarks(view: NimView) =
   var startIter, endIter: TextIterObj
   let buffer = view.buffer
   view.freeErrors
@@ -621,7 +622,7 @@ proc removeMarks(view: var NimView) =
   buffer.removeSourceMarks(startIter, endIter, NullStr)
   view.showLinemarks = false
 
-proc setErrorAttr(view: var NimView) =
+proc setErrorAttr(view: NimView) =
   var attrs = newMarkAttributes()
   var color = RGBAObj(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.3)
   attrs.background = color
@@ -629,25 +630,25 @@ proc setErrorAttr(view: var NimView) =
   view.setMarkAttributes(ErrorTagName, attrs, priority = 1)
   objectUnref(attrs)
 
-proc setErrorMark(view: var NimView; ln, cn: int) =
+proc setErrorMark(view: NimView; ln, cn: int) =
   var iter: TextIterObj
   let buffer = view.buffer
-  buffer.getIterAtLineIndex320(iter, ln.cint, cn.cint)
+  buffer.getIterAtLineIndex(iter, ln.cint, cn.cint)
   discard iter.backwardLine
   if ln > 0:
     discard iter.forwardLine
   discard buffer.createSourceMark(NullStr, ErrorTagName, iter)
 
 # can not remember why we did it in this way...
-proc setErrorTag(view: var NimView; ln, cn, id: int) =
+proc setErrorTag(view: NimView; ln, cn, id: int) =
   var startIter, endIter, iter: TextIterObj
   let buffer = view.buffer
-  buffer.getIterAtLineIndex320(startIter, ln.cint, cn.cint)
+  buffer.getIterAtLineIndex(startIter, ln.cint, cn.cint)
   let tag: TextTag = buffer.tagTable.lookup(ErrorTagName)
   assert(tag != nil)
-  discard startiter.backwardChar # separate adjanced error tags 
+  discard startiter.backwardChar # separate adjanced error tags
   if startIter.hasTag(tag):
-    discard startIter.forwardToTagToggle(tag)
+    discard startIter.forwardToTagToggle(tag) # same as forwardChar?
   discard startiter.forwardChar
   endIter = startIter
   iter = startIter
@@ -657,6 +658,7 @@ proc setErrorTag(view: var NimView; ln, cn, id: int) =
   buffer.applyTag(tag, startIter, endIter)
   buffer.applyTagByName($id, startIter, endIter)
 
+# settings parameter is unused
 proc loadContent(file: GFile; buffer: NimViewBuffer; settings: GSettings) =
   var
     contents: cstring
@@ -665,7 +667,7 @@ proc loadContent(file: GFile; buffer: NimViewBuffer; settings: GSettings) =
   if file != nil and loadContents(file, cancellable = nil, contents, length, etagOut = nil, error):
     buffer.setText(contents, length.cint)
     free(contents)
-    buffer.setPath(file.path)
+    buffer.setPath(file.path) # no free() needed, setPath is using the string
   buffer.modified = false
 
 proc getMapping(value: var GValueObj; variant: GVariant; userData: GPointer): GBoolean {.cdecl.} =
@@ -836,7 +838,7 @@ proc addViewToNotebook(win: NimEdAppWindow; notebook: Notebook; file: gio.GFile 
   label.ellipsize = pango.EllipsizeMode.END
   label.halign = Align.START
   label.valign = Align.CENTER
-  discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), label)
+  discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), view)
   if buf.isNil:
     buffer.handlerID = gSignalConnect(buffer, "notify::cursor-position", gCallback(onCursorMoved), win)
   let box = newBox(Orientation.HORIZONTAL, spacing = 0)
@@ -880,7 +882,7 @@ proc pageNumChanged(notebook: Notebook; child: Widget; pageNum: cuint; userData:
     let parent = container(notebook.parent)
     if not isPaned(parent):
       let h = win.getApplication
-      if h != nil:
+      if h != nil: # can it be nil?
         quit(h)
       return
     var c1 = paned(parent).child1
@@ -921,9 +923,9 @@ proc split(app: Gpointer; o: Orientation) =
   let paned: Paned = newPaned(o)
   paned.pack1(notebook, resize = true, shrink = false)
   let newbook = newNotebook()
-  discard gSignalConnect (newbook, "page-added", gCallback(pageNumChanged), win)
-  discard gSignalConnect (newbook, "page-removed", gCallback(pageNumChanged), win)
-  discard gSignalConnect (newbook, "switch-page", gCallback(switchPage), win)
+  discard gSignalConnect(newbook, "page-added", gCallback(pageNumChanged), win)
+  discard gSignalConnect(newbook, "page-removed", gCallback(pageNumChanged), win)
+  discard gSignalConnect(newbook, "switch-page", gCallback(switchPage), win)
   bindWithMapping(win.settings, "showtabs", newbook, "show-tabs", gio.GSettingsBindFlags.GET, getMappingTabs, nil, newbook, nil)
   discard addViewToNotebook(win = nimEdAppWindow(app), notebook = newbook, file = nil)
   paned.pack2(newbook, resize = true, shrink = false)
@@ -965,17 +967,14 @@ proc fontSettingChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWind
   free(fontDesc);
 
 proc nimEdAppWindowInit(self: NimEdAppWindow) =
-  var
-    builder: Builder
-    menu: gio.GMenuModel
   initTemplate(self)
   self.settings = newSettings("org.gtk.ned")
   discard gSignalConnect(self.settings, "changed::styleschemesettingsid",
                    gCallback(settingsChanged), self)
   discard gSignalConnect(self.settings, "changed::fontsettingsid",
                    gCallback(fontSettingChanged), self)
-  builder = newBuilder(resourcePath = "/org/gtk/ned/gears-menu.ui")
-  menu = gMenuModel(getObject(builder, "menu"))
+  let builder = newBuilder(resourcePath = "/org/gtk/ned/gears-menu.ui")
+  let menu = gMenuModel(getObject(builder, "menu"))
   setMenuModel(self.gears, menu)
   objectUnref(builder)
   addActionEntries(gio.gActionMap(self), addr winAppEntries[0], cint(len(winAppEntries)), self)
@@ -987,7 +986,9 @@ proc nimEdAppWindowDispose(obj: GObject) {.cdecl.} =
   if win.timeoutEventSourceID != 0:
     discard sourceRemove(win.timeoutEventSourceID)
     win.timeoutEventSourceID = 0
-    win.statusbar.remove(win.statusID1, win.messageID)
+  if win.msgThreadSourceID != 0:
+    discard sourceRemove(win.msgThreadSourceID)
+    win.msgThreadSourceID = 0
   gObjectClass(nimEdAppWindowParentClass).dispose(obj)
 
 proc nimEdAppWindowClassInit(klass: NimEdAppWindowClass) =
@@ -1042,13 +1043,13 @@ type
 
 gDefineTypeWithPrivate(NedAppPrefs, dialogGetType())
 
-template typeNedAppPrefs(): expr = nedAppPrefsGetType()
+template typeNedAppPrefs(): untyped = nedAppPrefsGetType()
 
 proc nedAppPrefs(obj: GObject): NedAppPrefs =
   gTypeCheckInstanceCast(obj, nedAppPrefsGetType(), NedAppPrefsObj)
 
-proc isNedAppPrefs(obj: GObject): GBoolean =
-  gTypeCheckInstanceType(obj, typeNedAppPrefs)
+# proc isNedAppPrefs(obj: GObject): GBoolean =
+#   gTypeCheckInstanceType(obj, typeNedAppPrefs)
 
 proc styleSchemeChanged(sscb: StyleSchemeChooserButton, pspec: GParamSpec, settings: gio.GSettings) {.cdecl.} =
   discard settings.setString(StyleSchemeSettingsID, styleSchemeChooser(sscb).getStyleScheme.id)
@@ -1132,17 +1133,17 @@ proc preferencesActivated(action: gio.GSimpleAction; parameter: glib.GVariant; a
   let prefs: NedAppPrefs = nedAppPrefsNew(nimEdAppWindow(win))
   present(prefs)
 
-proc setVisibleChild(nb: Notebook; c: Widget): bool =
-  var i: cint = 0
-  var w: Widget
-  while true:
-    w = nb.getNthPage(i)
-    if w.isNil: break
-    if w == c:
-      nb.setCurrentPage(i)
-      return true
-    inc(i)
-  return false
+#proc setVisibleChild(nb: Notebook; c: Widget): bool =
+#  var i: cint = 0
+#  var w: Widget
+#  while true:
+#    w = nb.getNthPage(i)
+#    if w.isNil: break
+#    if w == c:
+#      nb.setCurrentPage(i)
+#      return true
+#    inc(i)
+#  return false
 
 proc findViewWithPath(views: GList; path: cstring): NimView =
   var p: GList = views
@@ -1164,8 +1165,8 @@ proc nimEdAppWindowDefOpen(win: NimEdAppWindow; file: gio.GFile): NimView =
     notebook: Notebook
   let path = file.path
   view = findViewWithPath(win.views, path)
+  free(path)
   if not view.isNil:
-    free(path)
     return view
   if win.settings.getBoolean("reusedefinition"):
     view = findViewWithDef(win.views)
@@ -1186,6 +1187,7 @@ proc nimEdAppWindowDefOpen(win: NimEdAppWindow; file: gio.GFile): NimView =
     else:
       notebook = win.target
     view = addViewToNotebook(win, notebook, file, buf = nil)
+  view.buffer.defView = true
   return view
 
 # support new view for old buffer
@@ -1215,7 +1217,7 @@ proc nimEdAppWindowSmartOpen(win: NimEdAppWindow; file: gio.GFile): NimView =
     else:
       view.setBuffer(buffer)
       view.label.text = basename(buffer.path)
-      discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), view.label)
+      discard gSignalConnect(buffer, "modified-changed", gCallback(onBufferModified), view)
   else:
     view = addViewToNotebook(win, notebook, file, buffer)
   return view
@@ -1233,7 +1235,7 @@ proc gotoMark(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer
   assert win == w
   if win.isNil: return
   let view: NimView = nimEdApp(app).lastActiveView
-  let buffer: NimViewBuffer = nimViewBuffer(view.getBuffer)
+  let buffer: NimViewBuffer = view.buffer
   var iter: TextIterObj
   buffer.getIterAtMark(iter, buffer.insert)
   win.searchcountlabel.text = ""
@@ -1303,7 +1305,7 @@ proc findPrev(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer
   findNP(action, parameter, app, false)
 
 proc find(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.cdecl.} =
-  var iter, startIter, endIter: TextIterObj
+  var startIter, endIter: TextIterObj
   let view: NimView = nimEdApp(app).lastActiveView
   let buffer = view.buffer
   if not buffer.getSelectionBounds(startIter, endIter):
@@ -1325,7 +1327,7 @@ proc jumpto(view: NimView; line, column: int) =
   buffer.placeCursor(iter)
   view.scrollToMark(buffer.insert, withinMargin = 0.25, useAlign = false, xalign = 0, yalign = 0)
 
-proc goto(view: var NimView; line, column: int) =
+proc goto(view: NimView; line, column: int) =
   var iter: TextIterObj
   let scrolled: ScrolledWindow = scrolledWindow(view.parent)
   let notebook: Notebook = notebook(scrolled.parent)
@@ -1336,16 +1338,30 @@ proc goto(view: var NimView; line, column: int) =
   if view.idleScroll == 0:
     view.idleScroll = idleAdd(GSourceFunc(scrollToCursor), view)
 
+proc pushTm(tm: var ThreadMsg; s: string) =
+  if tm.win.msgThreadSourceID == 0:
+    free(tm.msg)
+    tm.msg = if s.isNil: nil else: dup(s)
+    #if s.isNil:
+    #  tm.msg = nil
+    #else:
+    #  tm.msg = dup(s)
+    tm.win.msgThreadSourceID = threadsAddIdle(showMsgFromThread, addr tm)
+
 # no logging currently
+# https://developer.gnome.org/gdk3/stable/gdk3-Threads.html
+# So GTK is not thread safe, and we have to be really careful. We use the threadsAddIdle() function now to show messages.
 proc showData(win: NimEdAppWindow) {.thread.} =
   var line = newStringOfCap(240)
   var msg, h: StatusMsg
+  var tm: ThreadMsg
+  tm.win = win
   sleep(3000) # wait until nimsuggest process is ready -- will not help when editor is started without a Nim file!
   while true:
-    msg = channel.recv()
+    msg = channel.recv
     var b: bool
     while true: # only process last message in queue, ignore earlier ones
-      (b, h) = channel.tryRecv()
+      (b, h) = channel.tryRecv
       if b:
         if not msg.dirtypath.isNil:
           msg.dirtypath.removeFile
@@ -1354,7 +1370,7 @@ proc showData(win: NimEdAppWindow) {.thread.} =
         break
     if msg.filepath.isNil: break # this is the termination indicator
     if msg.filepath == "":
-      showmsg1(win, "")
+      pushTm(tm, nil)
       continue
     let socket = newSocket()
     socket.connect("localhost", NSPort)
@@ -1367,11 +1383,11 @@ proc showData(win: NimEdAppWindow) {.thread.} =
       if line.find('\t') < 0: continue
       (com, sk, sym, sig, path, lin, col, doc, percent) = line.split('\t')
     if sym.isNil:
-      showmsg1(win, "")
+      pushTm(tm, nil)
     else:
       if doc == "\"\"": doc = ""
       if path == msg.filepath: path = ""
-      showmsg1(win, sk[2..^1] & ' ' & sym & ' ' & sig & " (" & path & ' ' & lin & ", " & col & ") " & doc)
+      pushTm(tm, sk[2..^1] & ' ' & sym & ' ' & sig & " (" & path & ' ' & lin & ", " & col & ") " & doc)
     socket.close
     msg.dirtypath.removeFile
     sleep(500)
@@ -1457,8 +1473,8 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
   dirtypath.removeFile
   if path.isNil: return # no result
   let file: GFile = newFileForPath(path)
-  var newView = nimEdAppWindowDefOpen(win, file)
-  newView.buffer.defView = true
+  let newView = nimEdAppWindowDefOpen(win, file)
+  objectUnref(file)
   goto(newView, strutils.parseInt(lin) - 1, strutils.parseInt(col))
   setErrorMark(newView, strutils.parseInt(lin) - 1, 0)
   newView.showLinemarks = true
@@ -1467,7 +1483,7 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
   if nsProcess.isNil: return
   var ln, cn: int
   var nerrors, nwarnings: int
-  var startIter, endIter, iter: TextIterObj
+  var startIter, endIter: TextIterObj
   let win = nimEdAppWindow(getActiveWindow(application(app)))
   assert win != nil
   var view: NimView = nimEdApp(app).lastActiveView
@@ -1494,14 +1510,19 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
     socket.readLine(line)
     if line.len == 0: break
     if line == "\c\l" or line == last: continue
+    if line.startsWith("proc ") or line.startsWith("but expected one of:") or line.startsWith("      "): # !nice
+      view.appendError(line)
+      #continue
     if not line.startsWith(filename): continue
     log(win, line, LogLevel.debug)
     var errorPos = find(line, "Error", 12)
     if errorPos >= 0:
       isError = true
     else:
+      if  nwarnings > MaxErrorTags div 2: continue
       isError = false
       errorPos = find(line, "Hint", 12)
+      if errorPos < 0: errorPos = find(line, "Warning", 12)
     if errorPos >= 0:
       last = line
       var i = skipUntil(line, '(') + 1
@@ -1526,7 +1547,7 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
   socket.close
   view.showLinemarks = nerrors > 0
   dirtypath.removeFile
-  showmsg(win, "Errors: " & $nerrors & ", Warnings: " & $nwarnings)
+  showmsg(win, "Errors: " & $nerrors & ", Hints/Warnings: " & $nwarnings)
 
 proc useorrep(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer; rep: bool) =
   if nsProcess.isNil: return
@@ -1545,7 +1566,7 @@ proc useorrep(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer
   var replen {.global.}: int
   var pathcheck: string
   var multiMod: bool
-  win.searchEntry.text = "" # may be confusing
+  win.searchEntry.text = "" # may be confusing when not empty
   buffer.getStartIter(startIter)
   buffer.getEndIter(endIter)
   iter = startIter
@@ -1595,7 +1616,7 @@ proc useorrep(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer
         ln = parseInt(lin) - 1
         let h = sym.split('.')[^1]
         if fix.isNil: fix = h else: assert fix == h
-        buffer.getIterAtLineIndex320(startIter, ln.cint, cn.cint)
+        buffer.getIterAtLineIndex(startIter, ln.cint, cn.cint)
         endIter = startIter
         discard endIter.forwardChars(fix.len.cint)
         buffer.applyTag(tag, startIter, endIter)
@@ -1662,7 +1683,7 @@ proc setTTColor(fg, bg: cstring) =
   styleContextAddProviderForScreen(gdk3.screenGetDefault(), styleProvider(provider), STYLE_PROVIDER_PRIORITY_APPLICATION.cuint)
   discard loadFromData(provider, str, GSize(-1), gerror)
   if gerror != nil:
-    echo gerror.message
+    #echo gerror.message
     free(gerror)
   objectUnref(provider)
 
@@ -1711,9 +1732,9 @@ proc nimEdAppStartup(app: gio.GApplication) {.cdecl.} =
 proc nimEdAppActivateOrOpen(win: NimEdAppWindow) =
   let notebook: Notebook = newNotebook()
   bindWithMapping(win.settings, "showtabs", notebook, "show-tabs", gio.GSettingsBindFlags.GET, getMappingTabs, nil, notebook, nil)
-  discard gSignalConnect (notebook, "page-added", gCallback(pageNumChanged), win)
-  discard gSignalConnect (notebook, "page-removed", gCallback(pageNumChanged), win)
-  discard gSignalConnect (notebook, "switch-page", gCallback(switchPage), win)
+  discard gSignalConnect(notebook, "page-added", gCallback(pageNumChanged), win)
+  discard gSignalConnect(notebook, "page-removed", gCallback(pageNumChanged), win)
+  discard gSignalConnect(notebook, "switch-page", gCallback(switchPage), win)
   show(notebook)
   attach(win.grid, notebook, 0, 1, 1, 1)
   let scheme: cstring  = getString(win.settings, StyleSchemeSettingsID)
@@ -1736,25 +1757,31 @@ proc nimEdAppActivateOrOpen(win: NimEdAppWindow) =
     win.searchMatchFg = $fg
     free(fg)
     free(bg)
-  win.setDefaultSize(800, 500)
-  present(win)
-
-proc initSuggest(win: NimEdAppWindow; path: string) =
-  open(channel)
-  initLock(statusLock)
+  win.setDefaultSize(1200, 800)
   win.logLevel = LogLevel.log
   win.statusID1 = win.statusbar.getContextID("StatudID1")
   win.statusID2 = win.statusbar.getContextID("StatudID2")
-  if path != nil and path.hasSuffix(".nim"):
+  present(win)
+
+proc initSuggest(win: NimEdAppWindow; path: string) =
+  if nsProcess.isNil and path != nil and path.hasSuffix(".nim"):
     let file: GFile = newFileForPath(path)
     if queryExists(file, nil):
-      launchNSProcess(path)
-  createThread[NimEdAppWindow](thread, showData, win)
+      open(channel)
+      let nimBinPath = findExe("nim")
+      doAssert(nimBinPath != nil, "we need nim executable!")
+      let nimsuggestBinPath = findExe("nimsuggest")
+      doAssert(nimsuggestBinPath != nil, "we need nimsuggest executable!")
+      let nimPath = nimBinPath.splitFile.dir.parentDir
+      nsProcess = startProcess(nimsuggestBinPath, nimPath,
+                         ["--v2", "--threads:on", "--port:" & $NSPort, $path],
+                         options = {poStdErrToStdOut, poUsePath})
+      createThread[NimEdAppWindow](thread, showData, win)
+    objectUnref(file)
 
 proc nimEdAppActivate(app: gio.GApplication) {.cdecl.} =
   let win = nimEdAppWindowNew(nimEdApp(app))
   nimEdAppActivateOrOpen(win)
-  initSuggest(win, nil)
   let notebook = gtk3.notebook(win.grid.childAt(0, 1))
   discard addViewToNotebook(win, notebook, file = nil)
 
@@ -1790,13 +1817,15 @@ proc initapp {.cdecl.} =
 
 proc cleanup {.noconv.} =
   var msg: StatusMsg
-  msg.filepath = nil
-  channel.send(msg)
-  joinThreads(thread)
-  if nsProcess != nil:
-    nsProcess.terminate
-    discard nsProcess.waitForExit
-    nsProcess.close
+  let app = applicationGetDefault()
+  if not (app.isNil or app.isRemote):
+    msg.filepath = nil
+    channel.send(msg)
+    joinThreads(thread)
+    if nsProcess != nil:
+      nsProcess.terminate
+      discard nsProcess.waitForExit
+      nsProcess.close
 
 addQuitProc(cleanup)
 #[ we use a text view for logging now
@@ -1806,6 +1835,4 @@ addHandler(L)
 ]#
 initapp()
 
-# 1818 lines
-# CTRL n/N first/last Line
-# SHIFT cursor Mark
+# 1838 lines
