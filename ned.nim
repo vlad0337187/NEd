@@ -1819,10 +1819,11 @@ proc cleanup {.noconv.} =
   var msg: StatusMsg
   let app = applicationGetDefault()
   if not (app.isNil or app.isRemote):
-    msg.filepath = nil
-    channel.send(msg)
-    joinThreads(thread)
     if nsProcess != nil:
+      msg.filepath = nil
+      channel.send(msg)
+      joinThreads(thread)
+      #if nsProcess != nil:
       nsProcess.terminate
       discard nsProcess.waitForExit
       nsProcess.close
