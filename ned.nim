@@ -1,5 +1,5 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support
-# S. Salewski, 2016-NOV-30
+# S. Salewski, 2017-JAN-10
 # v 0.4.2
 #
 # Note: for resetting gsettings database:
@@ -947,7 +947,7 @@ var winAppEntries = [
   gio.GActionEntryObj(name: "closetabAction", activate: closetabAction, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "saveAsAction", activate: saveAsAction, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "markTargetAction", activate: markTargetAction, parameterType: nil, state: nil, changeState: nil),
-  gio.GActionEntryObj(name: "open", activate: open, parameterType: nil, state: nil, changeState: nil)]
+  gio.GActionEntryObj(name: "open", activate: ned.open, parameterType: nil, state: nil, changeState: nil)]
 
 proc settingsChanged(settings: gio.GSettings; key: cstring; win: NimEdAppWindow) {.cdecl.} =
   let manager = styleSchemeManagerGetDefault()
@@ -1660,7 +1660,7 @@ var appEntries = [
   gio.GActionEntryObj(name: "activateSearchEntry", activate: activateSearchEntry, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "gotoNextMark", activate: gotoNextMark, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "gotoPrevMark", activate: gotoPrevMark, parameterType: nil, state: nil, changeState: nil),
-  gio.GActionEntryObj(name: "find", activate: find, parameterType: nil, state: nil, changeState: nil),
+  gio.GActionEntryObj(name: "find", activate: ned.find, parameterType: nil, state: nil, changeState: nil),
   gio.GActionEntryObj(name: "check", activate: check, parameterType: nil, state: nil, changeState: nil)]
 
 const
