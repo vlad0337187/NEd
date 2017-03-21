@@ -1,6 +1,6 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support
-# S. Salewski, 2017-JAN-10
-# v 0.4.2
+# S. Salewski, 2017-MAR-21
+# v 0.4.3
 #
 # Note: for resetting gsettings database:
 # gsettings --schemadir "." reset-recursively "org.gtk.ned"
@@ -1505,34 +1505,34 @@ proc check(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {
   socket.connect("localhost", NSPort)
   socket.send("chk " & filepath & ";" & dirtypath & ":1:1\c\L")
   var last: string
+  var com, sk, sym, sig, path, lin, col, doc, percent: string
   while true:
     var isError: bool
     socket.readLine(line)
     if line.len == 0: break
     if line == "\c\l" or line == last: continue
-    if line.startsWith("proc ") or line.startsWith("but expected one of:") or line.startsWith("      "): # !nice
-      view.appendError(line)
-      #continue
-    if not line.startsWith(filename): continue
+    #echo ">>> ", line
+    (com, sk, sym, sig, path, lin, col, doc, percent) = line.split('\t') # sym is empty
+    if path != filepath: continue
+    if doc[0] == '"' : doc = doc[1 .. ^2]
+    doc = doc.replace("\\'", "'")
+    doc = doc.replace("\\x0A", "\n")
     log(win, line, LogLevel.debug)
-    var errorPos = find(line, "Error", 12)
-    if errorPos >= 0:
+    var show: bool
+    if sig == "Error":
       isError = true
+      show = true
     else:
       if  nwarnings > MaxErrorTags div 2: continue
       isError = false
-      errorPos = find(line, "Hint", 12)
-      if errorPos < 0: errorPos = find(line, "Warning", 12)
-    if errorPos >= 0:
+      show = sig == "Hint" or sig == "Warning"
+    if show:
       last = line
-      var i = skipUntil(line, '(') + 1
-      var j = parseInt(line, ln, i)
-      i = i + j + 2
-      j = parseInt(line, cn, i)
-      cn -= 1 # seems to be necessary for 0.14.3
+      cn = col.parseInt
+      ln = lin.parseInt
+      if cn < 0 or ln < 0: continue
       ln -= 1
-      line = substr(line, errorPos)
-      let id = view.addError(line, ln, cn)
+      let id = view.addError(doc, ln, cn)
       if id > 0:
         if isError:
           inc nerrors
