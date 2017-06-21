@@ -2,7 +2,7 @@
 :experimental:
 :imagesdir: http://ssalewski.de/tmp
 (c) Stefan Salewski +
-Version 0.4, 20-SEP-2016
+Version 0.4, 21-JUN-2017
 
 NEd is a simple GTK3 text editor with special support for the Nim programming
 language. It supports syntax highlighting and permanent extended symbol info

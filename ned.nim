@@ -1,6 +1,6 @@
 # NEd (NimEd) -- a GTK3/GtkSourceView Nim editor with nimsuggest support
-# S. Salewski, 2017-MAR-21
-# v 0.4.3
+# S. Salewski, 2017-JUN-21
+# v 0.4.4
 #
 # Note: for resetting gsettings database:
 # gsettings --schemadir "." reset-recursively "org.gtk.ned"
@@ -745,7 +745,7 @@ proc onCursorMoved(obj: GObject; pspec: GParamSpec; userData: Gpointer) {.cdecl.
   free(text)
   text = nil
   msg.line = iter.line + 1
-  msg.column = iter.lineIndex + 1 # we need this + 1
+  msg.column = iter.lineIndex# + 1 # we need this + 1
   if not iter.insideWord or iter.getBytesInLine < 3:
     msg.filepath = ""
     channel.send(msg)
@@ -1601,7 +1601,7 @@ proc useorrep(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer
       let socket = newSocket()
       socket.connect("localhost", NSPort)
       ln = iter.line + 1
-      cn = iter.lineIndex + 1
+      cn = iter.lineIndex# + 1
       socket.send("use " & filepath & ";" & dirtypath & ":" & $ln & ":" & $cn & "\c\L")
       var com, sk, sym, sig, path, lin, col, doc, percent: string
       while true:
