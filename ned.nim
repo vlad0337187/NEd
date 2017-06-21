@@ -411,7 +411,7 @@ proc getMethods(completionProvider: CompletionProvider; context: CompletionConte
       if dirtypath != nil:
         let socket = newSocket()
         let ln = iter.line + 1
-        let col = iter.lineIndex + 2 # 1 works too
+        let col = iter.lineIndex + 1#2 # 1 works too
         socket.connect("localhost", NSPort)
         socket.send("sug " & filepath & ";" & dirtypath & ":" & $ln & ":" & $col & "\c\L")
         let icon = providerGetIcon(provider)
@@ -1418,7 +1418,7 @@ proc con(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer) {.c
     socket.connect("localhost", NSPort)
     buffer.getIterAtMark(iter, buffer.insert)
     let ln = iter.line + 1
-    let column = iter.lineIndex + 1
+    let column = iter.lineIndex# + 1
     socket.send("con " & filepath & ";" & dirtypath & ":" & $ln & ":" & $column & "\c\L")
     var com, sk, sym, sig, path, lin, col, doc, percent: string
     while true:
@@ -1460,7 +1460,7 @@ proc gotoDef(action: gio.GSimpleAction; parameter: glib.GVariant; app: Gpointer)
   socket.connect("localhost", NSPort)
   buffer.getIterAtMark(iter, buffer.insert)
   let ln = iter.line + 1
-  let column = iter.lineIndex + 1
+  let column = iter.lineIndex# + 1
   socket.send("def " & filepath & ";" & dirtypath & ":" & $ln & ":" & $column & "\c\L")
   var com, sk, sym, sig, path, lin, col, doc, percent: string
   while true:
